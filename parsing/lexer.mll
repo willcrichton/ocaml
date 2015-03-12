@@ -17,8 +17,6 @@ open Lexing
 open Misc
 open Parser
 
-let doc2attr = ref true
-
 type error =
   | Illegal_character of char
   | Illegal_escape of string
@@ -396,7 +394,7 @@ rule token = parse
         reset_string_buffer ();
         let loc = { start_loc with
                     Location.loc_end = end_loc.Location.loc_end } in
-        if !doc2attr && String.length s > 0 && s.[0] = '*' then
+        if !Clflags.strict_doc && String.length s > 0 && s.[0] = '*' then
           if String.length s > 1 && s.[1] = '*' then
             FLOATING_DOC (String.sub s 2 (String.length s - 2), loc)
           else

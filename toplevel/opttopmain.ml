@@ -80,6 +80,7 @@ module Options = Main_args.Make_opttop_options (struct
   let _principal = set principal
   let _real_paths = set real_paths
   let _rectypes = set recursive_types
+  let _strict_doc = set strict_doc
   let _strict_sequence = set strict_sequence
   let _strict_formats = set strict_formats
   let _S = set keep_asm_file

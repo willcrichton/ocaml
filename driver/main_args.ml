@@ -462,6 +462,12 @@ let mk_strict_formats f =
   \      to detect and fix invalid formats.)"
 ;;
 
+let mk_strict_doc f =
+  "-strict-doc", Arg.Unit f,
+  " Enable a new mode where documentation comments are recognized by\n\
+  \      the compiler."
+;;
+
 let mk__ f =
   "-", Arg.String f,
   "<file>  Treat <file> as a file name (even if it starts with `-')"
@@ -482,6 +488,7 @@ module type Common_options = sig
   val _rectypes : unit -> unit
   val _safe_string : unit -> unit
   val _short_paths : unit -> unit
+  val _strict_doc : unit -> unit
   val _strict_sequence : unit -> unit
   val _strict_formats : unit -> unit
   val _unsafe : unit -> unit
@@ -676,6 +683,7 @@ struct
     mk_runtime_variant F._runtime_variant;
     mk_safe_string F._safe_string;
     mk_short_paths F._short_paths;
+    mk_strict_doc F._strict_doc;
     mk_strict_sequence F._strict_sequence;
     mk_strict_formats F._strict_formats;
     mk_thread F._thread;
@@ -727,6 +735,7 @@ struct
     mk_safe_string F._safe_string;
     mk_short_paths F._short_paths;
     mk_stdin F._stdin;
+    mk_strict_doc F._strict_doc;
     mk_strict_sequence F._strict_sequence;
     mk_strict_formats F._strict_formats;
     mk_unsafe F._unsafe;
@@ -794,6 +803,7 @@ struct
     mk_safe_string F._safe_string;
     mk_shared F._shared;
     mk_short_paths F._short_paths;
+    mk_strict_doc F._strict_doc;
     mk_strict_sequence F._strict_sequence;
     mk_strict_formats F._strict_formats;
     mk_thread F._thread;
@@ -858,6 +868,7 @@ module Make_opttop_options (F : Opttop_options) = struct
     mk_safe_string F._safe_string;
     mk_short_paths F._short_paths;
     mk_stdin F._stdin;
+    mk_strict_doc F._strict_doc;
     mk_strict_sequence F._strict_sequence;
     mk_strict_formats F._strict_formats;
     mk_unsafe F._unsafe;
@@ -914,6 +925,7 @@ struct
     mk_rectypes F._rectypes;
     mk_safe_string F._safe_string;
     mk_short_paths F._short_paths;
+    mk_strict_doc F._strict_doc;
     mk_strict_sequence F._strict_sequence;
     mk_strict_formats F._strict_formats;
     mk_thread F._thread;

@@ -209,6 +209,7 @@ module Options = Main_args.Make_ocamldoc_options(struct
   let _rectypes = set Clflags.recursive_types
   let _safe_string = unset Clflags.unsafe_string
   let _short_paths = unset Clflags.real_paths
+  let _strict_doc = set Clflags.strict_doc
   let _strict_sequence = set Clflags.strict_sequence
   let _strict_formats = set Clflags.strict_formats
   let _thread = set Clflags.use_threads
