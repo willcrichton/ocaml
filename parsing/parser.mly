@@ -422,6 +422,7 @@ let mkctf_attrs d attrs =
 %token WITH
 %token <string * Location.t> COMMENT
 %token <string * Location.t> DOC
+%token <string * Location.t> FLOATING_DOC
 
 %token EOL
 
@@ -2245,6 +2246,7 @@ post_item_attribute:
 ;
 floating_attribute:
   LBRACKETATATAT attr_id payload RBRACKET { ($2, $3) }
+| FLOATING_DOC { mkdoc_attr $1 }
 ;
 post_item_attributes:
     /* empty */  { [] }

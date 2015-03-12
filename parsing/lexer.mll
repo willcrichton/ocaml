@@ -397,7 +397,10 @@ rule token = parse
         let loc = { start_loc with
                     Location.loc_end = end_loc.Location.loc_end } in
         if !doc2attr && String.length s > 0 && s.[0] = '*' then
-          DOC (String.sub s 1 (String.length s - 1), loc)
+          if String.length s > 1 && s.[1] = '*' then
+            FLOATING_DOC (String.sub s 2 (String.length s - 2), loc)
+          else
+            DOC (String.sub s 1 (String.length s - 1), loc)
         else
           COMMENT (s, loc)
       }
