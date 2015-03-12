@@ -17,6 +17,8 @@ open Lexing
 open Misc
 open Parser
 
+let doc2attr = ref true
+
 type error =
   | Illegal_character of char
   | Illegal_escape of string
@@ -392,8 +394,12 @@ rule token = parse
         let end_loc = comment lexbuf in
         let s = get_stored_string () in
         reset_string_buffer ();
-        COMMENT (s, { start_loc with
-                      Location.loc_end = end_loc.Location.loc_end })
+        let loc = { start_loc with
+                    Location.loc_end = end_loc.Location.loc_end } in
+        if !doc2attr && String.length s > 0 && s.[0] = '*' then
+          DOC (String.sub s 1 (String.length s - 1), loc)
+        else
+          COMMENT (s, loc)
       }
   | "(*)"
       { let loc = Location.curr lexbuf  in

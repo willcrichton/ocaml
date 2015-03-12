@@ -140,6 +140,9 @@ let rec mktailpat nilloc = function
 let mkstrexp e attrs =
   { pstr_desc = Pstr_eval (e, attrs); pstr_loc = e.pexp_loc }
 
+let mkdoc_attr (txt, loc) =
+  (mknoloc "ocaml.doc", PStr [mkstrexp (Exp.constant ~loc (Const_string (txt, Some "doc"))) []])
+
 let mkexp_constraint e (t1, t2) =
   match t1, t2 with
   | Some t, None -> ghexp(Pexp_constraint(e, t))
@@ -418,6 +421,7 @@ let mkctf_attrs d attrs =
 %token WHILE
 %token WITH
 %token <string * Location.t> COMMENT
+%token <string * Location.t> DOC
 
 %token EOL
 
@@ -2207,6 +2211,7 @@ attribute:
 ;
 post_item_attribute:
   LBRACKETATAT attr_id payload RBRACKET { ($2, $3) }
+| DOC { mkdoc_attr $1 }
 ;
 floating_attribute:
   LBRACKETATATAT attr_id payload RBRACKET { ($2, $3) }
