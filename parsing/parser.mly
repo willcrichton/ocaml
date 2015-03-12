@@ -1599,6 +1599,16 @@ type_kind:
       { (Ptype_variant(List.rev $3), Private, None) }
   | EQUAL private_flag BAR constructor_declarations
       { (Ptype_variant(List.rev $4), $2, None) }
+
+  | EQUAL LBRACKET constructor_declarations RBRACKET
+      { (Ptype_variant(List.rev $3), Public, None) }
+  | EQUAL LBRACKET BAR constructor_declarations RBRACKET
+      { (Ptype_variant(List.rev $4), Public, None) }
+  | EQUAL PRIVATE LBRACKET constructor_declarations RBRACKET
+      { (Ptype_variant(List.rev $4), Private, None) }
+  | EQUAL PRIVATE LBRACKET BAR constructor_declarations RBRACKET
+      { (Ptype_variant(List.rev $5), Private, None) }
+
   | EQUAL DOTDOT
       { (Ptype_open, Public, None) }
   | EQUAL private_flag LBRACE label_declarations opt_semi RBRACE
