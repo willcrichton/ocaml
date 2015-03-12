@@ -1600,13 +1600,13 @@ type_kind:
   | EQUAL private_flag BAR constructor_declarations
       { (Ptype_variant(List.rev $4), $2, None) }
 
-  | EQUAL LBRACKET constructor_declarations RBRACKET
+  | EQUAL LBRACKET delim_constructor_declarations RBRACKET
       { (Ptype_variant(List.rev $3), Public, None) }
-  | EQUAL LBRACKET BAR constructor_declarations RBRACKET
+  | EQUAL LBRACKET BAR delim_constructor_declarations RBRACKET
       { (Ptype_variant(List.rev $4), Public, None) }
-  | EQUAL PRIVATE LBRACKET constructor_declarations RBRACKET
+  | EQUAL PRIVATE LBRACKET delim_constructor_declarations RBRACKET
       { (Ptype_variant(List.rev $4), Private, None) }
-  | EQUAL PRIVATE LBRACKET BAR constructor_declarations RBRACKET
+  | EQUAL PRIVATE LBRACKET BAR delim_constructor_declarations RBRACKET
       { (Ptype_variant(List.rev $5), Private, None) }
 
   | EQUAL DOTDOT
@@ -1667,6 +1667,17 @@ constructor_declaration:
       {
        let args,res = $2 in
        Type.constructor (mkrhs $1 1) ~args ?res ~loc:(symbol_rloc()) ~attrs:$3
+      }
+;
+delim_constructor_declarations:
+    delim_constructor_declaration                     { [$1] }
+  | delim_constructor_declarations BAR delim_constructor_declaration { $3 :: $1 }
+;
+delim_constructor_declaration:
+  | constr_ident generalized_constructor_arguments attributes post_item_attributes
+      {
+       let args,res = $2 in
+       Type.constructor (mkrhs $1 1) ~args ?res ~loc:(symbol_rloc()) ~attrs:($3 @ $4)
       }
 ;
 str_exception_declaration:
