@@ -150,9 +150,51 @@ let file ppf ~tool_name inputfile parse_fun ast_magic =
       end else begin
         seek_in ic 0;
         Location.input_name := inputfile;
-        let lexbuf = Lexing.from_channel ic in
-        Location.init lexbuf inputfile;
-        parse_fun lexbuf
+        try
+          let lexbuf = Lexing.from_channel ic in
+          Location.init lexbuf inputfile;
+          parse_fun lexbuf
+        with Syntaxerr.Error _ when !Clflags.strict_doc ->
+          (* We try to parse the file again in legacy mode (non strict-doc).
+             If this succeeds, the error can only be caused by a bogus
+             documentation comment.  In that case, we report a warning
+             on the last doc token. This means that at most one
+             warning can be reported in a single unit. (We could also
+             restart parsing by informing the lexer to ignore only
+             this last doc token, but this becomes messy.)
+
+             It would also be possible to add logic to drop a doc
+             token that causes directly a parse error (and show a
+             warning) and continue parsing.  This can be done by
+             extending the Parsing module with a new exception which
+             can be raise by a custom parse_error function.  When this
+             exception is raised, Parsing reads the next token (as in
+             the Read_token case) and loop.  We would only do that
+             when the last token was a doc comment (info collected by the
+             "token" function in lexer.mll).
+
+             Unfortunately, this approach doesn't work for cases where
+             the parse error is only detected after the doc token, as
+             in:
+
+                 let x = 1 (** *) + 2
+
+             We could do a best-effort and combine the two techniques.
+          *)
+
+          let last_doc = !Location.last_doc_token_loc in
+          try
+            Clflags.strict_doc := false;
+            seek_in ic 0;
+            let lexbuf = Lexing.from_channel ic in
+            Location.init lexbuf inputfile;
+            let ast = parse_fun lexbuf in
+            Location.prerr_warning last_doc Warnings.Bad_location_for_doc;
+            ast
+          with exn ->
+            Clflags.strict_doc := false;
+            raise exn
+
       end
     with x -> close_in ic; raise x
   in

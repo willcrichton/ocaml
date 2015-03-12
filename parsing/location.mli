@@ -117,3 +117,6 @@ val report_error: formatter -> error -> unit
 
 val report_exception: formatter -> exn -> unit
   (* Reraise the exception if it is unknown. *)
+
+val last_doc_token_loc: t ref
+  (* Remember the location of the last doc token. *)

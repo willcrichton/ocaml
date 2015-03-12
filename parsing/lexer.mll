@@ -669,7 +669,11 @@ and skip_sharp_bang = parse
         COMMENT (s, comment_loc) ->
           last_comments := (s, comment_loc) :: !last_comments;
           token lexbuf
-      | tok -> tok
+      | DOC(_, loc) | FLOATING_DOC(_, loc) as tok ->
+          Location.last_doc_token_loc := loc;
+          tok
+      | tok ->
+          tok
   let comments () = List.rev !last_comments
 
   let init () =
