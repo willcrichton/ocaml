@@ -1716,16 +1716,19 @@ constructor_arguments:
   | record_declaration { Pcstr_record $1 }
 ;
 label_declarations:
-    label_declaration                           { [$1] }
-  | label_declarations SEMI label_declaration   { $3 :: $1 }
+    label_declaration SEMI post_item_attributes { [$1 $3] }
+  | label_declaration { [$1 []] }
+  | label_declaration SEMI post_item_attributes label_declarations { $1 $3 :: $4 }
 ;
 record_declaration:
-  | LBRACE label_declarations opt_semi RBRACE { List.rev $2 }
+  | LBRACE label_declarations RBRACE { $2 }
 ;
 label_declaration:
-    mutable_flag label COLON poly_type_no_attr attributes
+    mutable_flag label COLON poly_type_no_attr attributes post_item_attributes
       {
-       Type.field (mkrhs $2 2) $4 ~mut:$1 ~attrs:$5 ~loc:(symbol_rloc())
+        fun more ->
+          Type.field (mkrhs $2 2) $4 ~mut:$1 ~attrs:($5 @ $6 @ more)
+            ~loc:(symbol_rloc())
       }
 ;
 
