@@ -1611,8 +1611,8 @@ type_kind:
 
   | EQUAL DOTDOT
       { (Ptype_open, Public, None) }
-  | EQUAL private_flag LBRACE label_declarations opt_semi RBRACE
-      { (Ptype_record(List.rev $4), $2, None) }
+  | EQUAL private_flag record_declaration
+      { (Ptype_record(List.rev $3), $2, None) }
   | EQUAL core_type EQUAL private_flag opt_bar constructor_declarations
       { (Ptype_variant(List.rev $6), $4, Some $2) }
   | EQUAL core_type EQUAL private_flag LBRACKET opt_bar
@@ -1620,8 +1620,8 @@ type_kind:
       { (Ptype_variant(List.rev $7), $4, Some $2) }
   | EQUAL core_type EQUAL DOTDOT
       { (Ptype_open, Public, Some $2) }
-  | EQUAL core_type EQUAL private_flag LBRACE label_declarations opt_semi RBRACE
-      { (Ptype_record(List.rev $6), $4, Some $2) }
+  | EQUAL core_type EQUAL private_flag record_declaration
+      { (Ptype_record(List.rev $5), $4, Some $2) }
 ;
 optional_type_parameters:
     /*empty*/                                   { [] }
@@ -1713,11 +1713,14 @@ generalized_constructor_arguments:
 
 constructor_arguments:
   | core_type_list_no_attr { Pcstr_tuple (List.rev $1) }
-  | LBRACE label_declarations opt_semi RBRACE { Pcstr_record (List.rev $2) }
+  | record_declaration { Pcstr_record (List.rev $1) }
 ;
 label_declarations:
     label_declaration                           { [$1] }
   | label_declarations SEMI label_declaration   { $3 :: $1 }
+;
+record_declaration:
+  | LBRACE label_declarations opt_semi RBRACE { $2 }
 ;
 label_declaration:
     mutable_flag label COLON poly_type_no_attr attributes
