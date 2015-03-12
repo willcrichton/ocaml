@@ -1615,6 +1615,9 @@ type_kind:
       { (Ptype_record(List.rev $4), $2, None) }
   | EQUAL core_type EQUAL private_flag opt_bar constructor_declarations
       { (Ptype_variant(List.rev $6), $4, Some $2) }
+  | EQUAL core_type EQUAL private_flag LBRACKET opt_bar
+    delim_constructor_declarations RBRACKET
+      { (Ptype_variant(List.rev $7), $4, Some $2) }
   | EQUAL core_type EQUAL DOTDOT
       { (Ptype_open, Public, Some $2) }
   | EQUAL core_type EQUAL private_flag LBRACE label_declarations opt_semi RBRACE
