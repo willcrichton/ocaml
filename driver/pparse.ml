@@ -148,53 +148,80 @@ let file ppf ~tool_name inputfile parse_fun ast_magic =
         Location.input_name := input_value ic;
         input_value ic
       end else begin
-        seek_in ic 0;
         Location.input_name := inputfile;
-        try
+
+        let parse () =
+          seek_in ic 0;
           let lexbuf = Lexing.from_channel ic in
           Location.init lexbuf inputfile;
           parse_fun lexbuf
-        with Syntaxerr.Error _ when !Clflags.strict_doc ->
-          (* We try to parse the file again in legacy mode (non strict-doc).
-             If this succeeds, the error can only be caused by a bogus
-             documentation comment.  In that case, we report a warning
-             on the last doc token. This means that at most one
-             warning can be reported in a single unit. (We could also
-             restart parsing by informing the lexer to ignore only
-             this last doc token, but this becomes messy.)
+        in
 
-             It would also be possible to add logic to drop a doc
-             token that causes directly a parse error (and show a
-             warning) and continue parsing.  This can be done by
-             extending the Parsing module with a new exception which
-             can be raise by a custom parse_error function.  When this
-             exception is raised, Parsing reads the next token (as in
-             the Read_token case) and loop.  We would only do that
-             when the last token was a doc comment (info collected by the
-             "token" function in lexer.mll).
+        let last_doc_token = ref None in
+        Location.keep_doc_token :=
+          (fun loc -> last_doc_token := Some loc; true);
 
-             Unfortunately, this approach doesn't work for cases where
-             the parse error is only detected after the doc token, as
-             in:
+        let handle_bad_doc_comments () =
+          (* Special logic to turn badly located documentation
+             comments (which result in parsing errors) into
+             warnings. *)
 
-                 let x = 1 (** *) + 2
+          (* First, we try to parse again by ignoring all
+             documentation comments (this could be achieved also by
+             unsetting strict_doc). *)
 
-             We could do a best-effort and combine the two techniques.
-          *)
+          Location.keep_doc_token := (fun _ -> false);
+          ignore (parse ());
 
-          let last_doc = !Location.last_doc_token_loc in
-          try
-            Clflags.strict_doc := false;
-            seek_in ic 0;
-            let lexbuf = Lexing.from_channel ic in
-            Location.init lexbuf inputfile;
-            let ast = parse_fun lexbuf in
-            Location.prerr_warning last_doc Warnings.Bad_location_for_doc;
-            ast
-          with exn ->
-            Clflags.strict_doc := false;
-            raise exn
+          (* If the line above raise an exception, this is because the
+             file contains a "real" parsing error (not caused by doc
+             comments).  If this is the case, we do nothing special,
+             i.e. we do not try to report badly located doc
+             comments. *)
 
+
+          (* Otherwise, we know the original error is caused by one of
+             the doc comments.  We parse again by ignoring the last
+             doc comments (from the original parsing) which is likely
+             to be the cause for the parse error.  We iterate by
+             ignoring more and more doc comment, until we reach again
+             a state where the file is parsed without errors (we know
+             there is such a state; the number of iteration is bounded
+             by the total number of doc comments). *)
+
+          let ignored_doc_tokens = Hashtbl.create 16 in
+          Location.keep_doc_token :=
+            (fun loc ->
+               if Hashtbl.mem ignored_doc_tokens loc then false
+               else begin
+                 last_doc_token := Some loc;
+                 true
+               end
+            );
+
+          let rec loop () =
+            begin match !last_doc_token with
+            | Some x ->
+                Location.prerr_warning x Warnings.Bad_location_for_doc;
+                Hashtbl.add ignored_doc_tokens x ()
+            | None -> assert false;
+            end;
+            last_doc_token := None;
+            try parse ()
+            with _exn -> loop ()
+          in
+          loop ()
+        in
+
+        Misc.try_finally
+          (fun () ->
+             try
+               parse ()
+             with Syntaxerr.Error _
+               when !Clflags.strict_doc && !last_doc_token <> None ->
+                 handle_bad_doc_comments ()
+          )
+          (fun () -> Location.keep_doc_token := (fun _ -> true))
       end
     with x -> close_in ic; raise x
   in

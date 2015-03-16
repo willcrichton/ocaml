@@ -386,4 +386,4 @@ let () =
 let raise_errorf ?(loc = none) ?(sub = []) ?(if_highlight = "") =
   Printf.ksprintf (fun msg -> raise (Error ({loc; msg; sub; if_highlight})))
 
-let last_doc_token_loc = ref none
+let keep_doc_token = ref (fun _ -> true)
