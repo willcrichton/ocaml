@@ -30,6 +30,11 @@ let maybe_pointer exp =
   | Tconstr(p, args, abbrev) ->
       not (Path.same p Predef.path_int) &&
       not (Path.same p Predef.path_char) &&
+      begin
+        (* If the type is explicitly marked as immediate, then it cannot be a pointer *)
+        let type_decl = Env.find_type p env in
+        not type_decl.type_immediate
+      end &&
       begin try
         match Env.find_type p exp.exp_env with
         | {type_kind = Type_variant []} -> true (* type exn *)
