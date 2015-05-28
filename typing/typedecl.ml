@@ -45,6 +45,7 @@ type error =
   | Bad_fixed_type of string
   | Unbound_type_var_ext of type_expr * extension_constructor
   | Varying_anonymous
+  | Bad_immediate_attribute
 
 open Typedtree
 
@@ -57,7 +58,7 @@ let compute_immediacy env tdecl required =
     match (tdecl.type_kind, tdecl.type_manifest) with
     | (Type_variant (_ :: _ as cstrs), _) ->
       (* Same logic as maybe_pointer_type *)
-      not (List.exists (fun c -> c.Types.cd_args <> Cstr_tuple []) cstrs)
+      not (List.exists (fun c -> c.Types.cd_args <> []) cstrs)
     | (Type_abstract, Some(typ)) ->
       not (Ctype.maybe_pointer_type env typ)
     | (Type_abstract, None) -> required
@@ -1677,6 +1678,10 @@ let report_error ppf = function
       fprintf ppf "@[%s@ %s@ %s@]"
         "In this GADT definition," "the variance of some parameter"
         "cannot be checked"
+  | Bad_immediate_attribute ->
+      fprintf ppf "@[%s@ %s@]"
+        "Types marked with the immediate attribute must be"
+        "non-pointer types like int or bool"
 
 let () =
   Location.register_error_of_exn

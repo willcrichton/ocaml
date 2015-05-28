@@ -4509,7 +4509,7 @@ let maybe_pointer_type env typ =
       (match type_decl.type_kind with
        | Type_variant [] -> true (* type exn *)
        | Type_variant cstrs ->
-         List.exists (fun c -> c.Types.cd_args <> Cstr_tuple []) cstrs
+         List.exists (fun c -> c.Types.cd_args <> []) cstrs
        | _ -> true)
     with Not_found -> true
     (* This can happen due to e.g. missing -I options,

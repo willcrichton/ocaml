@@ -374,7 +374,7 @@ let transl_prim loc prim args =
     let p = find_primitive loc prim_name in
     (* Try strength reduction based on the type of the argument *)
     begin match (p, args) with
-        (Psetfield(n, _), [arg1; arg2]) -> Psetfield(n, maybe_pointer arg2)
+        (Psetfield(n, _), [arg1; arg2]) -> Psetfield(n, Ctype.maybe_pointer arg2)
       | (Parraylength Pgenarray, [arg])   -> Parraylength(array_kind arg)
       | (Parrayrefu Pgenarray, arg1 :: _) -> Parrayrefu(array_kind arg1)
       | (Parraysetu Pgenarray, arg1 :: _) -> Parraysetu(array_kind arg1)
@@ -782,7 +782,7 @@ and transl_exp0 e =
   | Texp_setfield(arg, _, lbl, newval) ->
       let access =
         match lbl.lbl_repres with
-          Record_regular -> Psetfield(lbl.lbl_pos, maybe_pointer newval)
+          Record_regular -> Psetfield(lbl.lbl_pos, Ctype.maybe_pointer newval)
         | Record_float -> Psetfloatfield lbl.lbl_pos in
       Lprim(access, [transl_exp arg; transl_exp newval])
   | Texp_array expr_list ->
@@ -1118,7 +1118,7 @@ and transl_record all_labels repres lbl_expr_list opt_init_expr =
     let update_field (_, lbl, expr) cont =
       let upd =
         match lbl.lbl_repres with
-          Record_regular -> Psetfield(lbl.lbl_pos, maybe_pointer expr)
+          Record_regular -> Psetfield(lbl.lbl_pos, Ctype.maybe_pointer expr)
         | Record_float -> Psetfloatfield lbl.lbl_pos in
       Lsequence(Lprim(upd, [Lvar copy_id; transl_exp expr]), cont) in
     begin match opt_init_expr with
