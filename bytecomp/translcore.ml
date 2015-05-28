@@ -1062,7 +1062,7 @@ and transl_let rec_flag pat_expr_list body =
       Lletrec(List.map2 transl_case pat_expr_list idlist, body)
 
 and transl_setinstvar self var expr =
-  Lprim(Parraysetu (if maybe_pointer expr then Paddrarray else Pintarray),
+  Lprim(Parraysetu (if Ctype.maybe_pointer expr then Paddrarray else Pintarray),
                     [self; transl_normal_path var; transl_exp expr])
 
 and transl_record all_labels repres lbl_expr_list opt_init_expr =
