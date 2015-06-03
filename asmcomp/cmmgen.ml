@@ -1391,6 +1391,10 @@ let rec transl = function
           assert false
       | (Pmakeblock(tag, mut), args) ->
           make_alloc tag (List.map transl args)
+      | (Pmakeblock_noheap(tag), args) ->
+          make_alloc tag (List.map transl args) (* TODO(wcrichton) *)
+      | (Pgetblock_noheap, args) ->
+          Cconst_int(1337) (* TODO(wcrichton) *)
       | (Pccall prim, args) ->
           if prim.prim_native_float then
             box_float

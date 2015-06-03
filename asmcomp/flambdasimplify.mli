@@ -73,3 +73,5 @@ val lift_set_of_closures : Expr_id.t flambda -> Expr_id.t flambda
 
 (** Replace setglobalfield(false, n) by ignore if the global is unused *)
 val remove_unused_globals : Expr_id.t flambda -> Expr_id.t flambda
+
+val unbox_returns : Expr_id.t flambda -> Expr_id.t flambda

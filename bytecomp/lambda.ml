@@ -52,6 +52,9 @@ type primitive =
   | Pfloatfield of int
   | Psetfloatfield of int
   | Pduprecord of Types.record_representation * int
+  (* Optimization to avoid heap allocation, always immutable *)
+  | Pmakeblock_noheap of int
+  | Pgetblock_noheap
   (* Force lazy values *)
   | Plazyforce
   (* External call *)

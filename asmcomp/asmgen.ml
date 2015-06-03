@@ -141,6 +141,7 @@ let flambda ppf (size, exported, lam) =
       let flam = Inlining.inline ~never_inline:true flam in
       let flam = Flambdasimplify.remove_unused_closure_variables flam in
       let flam = Flambda_ref_to_variables.eliminate_ref flam in
+      let flam = Flambdasimplify.unbox_returns flam in
       loop (rounds - 1) flam in
   let flam = loop !Clflags.simplify_rounds flam in
   dump_and_check "flambdasimplify" flam;

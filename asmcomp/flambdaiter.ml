@@ -499,6 +499,35 @@ let free_variables tree =
   iter_toplevel aux tree;
   Variable.Set.diff !free !bound
 
+let rec fold_return_sites f acc tree =
+  match tree with
+  | Fsymbol _
+  | Fvar _
+  | Fprim _
+  | Fstaticraise _
+  | Fconst _ -> f(acc, tree)
+
+  | Flet(kind, id, def, body, d) ->
+    let (acc, body') = fold_return_sites f acc body in
+    (acc, Flet(kind, id, def, body', d))
+
+  | Fapply({ap_function = body} as fn, d) ->
+    let (acc, body') = fold_return_sites f acc body in
+    (acc, Fapply({fn with ap_function = body'}, d))
+
+  | Fletrec(defs, body, d) ->
+    let (acc, body') = fold_return_sites f acc body in
+    (acc, Fletrec(defs, body', d))
+
+  | Fifthenelse(cond, body_then, body_else, d) ->
+    let (acc, body_then') = fold_return_sites f acc body_then in
+    let (acc, body_else') = fold_return_sites f acc body_else in
+    (acc, Fifthenelse(cond, body_then', body_else', d))
+
+  (* TODO(wcrichton): finish this *)
+  | _ -> (acc, tree)
+
+
 let map_data (type t1) (type t2) (f:t1 -> t2) (tree:t1 flambda) : t2 flambda =
   let rec mapper : t1 flambda -> t2 flambda = function
     | Fsymbol (sym, v) -> Fsymbol (sym, f v)

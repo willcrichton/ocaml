@@ -163,7 +163,7 @@ and 'a fset_of_closures = {
 
       This information is used for optimisation purpose, if such a binding is
       known, it is possible to specialise the body of the function according
-      to its parameter. This is usualy introduced when specialising a recusive
+      to its parameter. This is usually introduced when specialising a recusive
       function, for instance.
         [let rec map f = function
            | [] -> []

@@ -393,7 +393,8 @@ module Conv(P:Param2) = struct
                conv env arg],
               dbg)
 
-    | Fprim(Pmakeblock(tag, Asttypes.Immutable) as p, args, dbg, _) ->
+    | Fprim(Pmakeblock(tag, Asttypes.Immutable) as p, args, dbg, _)
+    | Fprim(Pmakeblock_noheap(tag) as p, args, dbg, _) ->
         let args = conv_list env args in
         begin match constant_list args with
         | None ->
