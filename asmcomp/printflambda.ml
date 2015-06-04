@@ -18,7 +18,7 @@ open Flambda
 
 let rec lam ppf = function
   | Fsymbol (symbol,_) ->
-      Symbol.print ppf symbol
+      fprintf ppf "[%a]" Symbol.print symbol
   | Fvar (id,_) ->
       Variable.print ppf id
   | Fconst (cst,_) ->

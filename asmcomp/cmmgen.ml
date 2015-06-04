@@ -1252,6 +1252,8 @@ let rec is_unboxed_number = function
   | Ulet (_, _, e) | Usequence (_, e) -> is_unboxed_number e
   | _ -> No_unboxing
 
+(* TODO(wcrichton): traversing to check if a function uses a block as a value
+ * should look basically like this. *)
 let subst_boxed_number unbox_fn boxed_id unboxed_id box_chunk box_offset exp =
   let need_boxed = ref false in
   let assigned = ref false in
@@ -1270,6 +1272,7 @@ let subst_boxed_number unbox_fn boxed_id unboxed_id box_chunk box_offset exp =
         if Ident.same id boxed_id && chunk = box_chunk && box_offset = 0
         then Cvar unboxed_id
         else e
+    (* TODO(wcrichton): projection to field of a block occurs here *)
     | Cop(Cload chunk, [Cop(Cadda, [Cvar id; Cconst_int ofs])]) as e ->
         if Ident.same id boxed_id && chunk = box_chunk && ofs = box_offset
         then Cvar unboxed_id
@@ -1336,7 +1339,7 @@ let rec transl = function
       Cop(Calloc, transl_fundecls 0 fundecls)
   | Uoffset(arg, offset) ->
       field_address (transl arg) offset
-  | Udirect_apply(lbl, args, dbg) ->
+  | Udirect_apply(lbl, args, dbvg) ->
       Cop(Capply(typ_addr, dbg), Cconst_symbol lbl :: List.map transl args)
   | Ugeneric_apply(clos, [arg], dbg) ->
       bind "fun" (transl clos) (fun clos ->
@@ -1392,9 +1395,9 @@ let rec transl = function
       | (Pmakeblock(tag, mut), args) ->
           make_alloc tag (List.map transl args)
       | (Pmakeblock_noheap(tag), args) ->
-          make_alloc tag (List.map transl args) (* TODO(wcrichton) *)
+          make_alloc tag (List.map transl args)
       | (Pgetblock_noheap, args) ->
-          Cconst_int(1337) (* TODO(wcrichton) *)
+          transl (List.nth args 0)
       | (Pccall prim, args) ->
           if prim.prim_native_float then
             box_float
@@ -2055,6 +2058,7 @@ and transl_unbox_int bi = function
       Cconst_int i
   | exp -> unbox_int bi (transl exp)
 
+(* TODO(wcrichton): optimizations always occur in lets, look at this fn *)
 and transl_unbox_let box_fn unbox_fn transl_unbox_fn box_chunk box_offset
                      id exp body =
   let unboxed_id = Ident.create (Ident.name id) in

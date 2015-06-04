@@ -585,7 +585,11 @@ let plam = Printflambda.flambda Format.std_formatter
 let unbox_returns tree =
   let open Flambda in
   Flambdaiter.map (function
-    | Fclosure({ fu_closure = Fset_of_closures({cl_fun} as set, dset) } as closure, d) as flam ->
+    | Fclosure({ fu_closure = Fset_of_closures({cl_fun} as set, dset) }
+               as closure, d) as flam ->
+      if not (!Clflags.dump_flambda) ||
+         Variable.Map.cardinal cl_fun.funs <> 1
+      then flam else
       let funs =
         Variable.Map.map
           (fun ({body} as fn : 'a function_declaration) ->
@@ -600,14 +604,16 @@ let unbox_returns tree =
              let (can_unbox, unboxed_closure) =
                Flambdaiter.fold_return_sites unbox_return true body
              in
-             if can_unbox then {fn with body = unboxed_closure}
-             else fn)
+             if can_unbox then ({fn with body = unboxed_closure}, true)
+             else (fn, false))
           cl_fun.funs
       in
       let mkvar = Variable.create ~current_compilation_unit:cl_fun.compilation_unit in
-      let (fn_id, fn) = Variable.Map.choose funs in
+      let (fn_id, (fn, was_unboxed)) = Variable.Map.choose funs in
+      if (not was_unboxed) then flam else
+      let fn_id_str = Variable.unique_name fn_id in
       let params =
-        List.map (fun v -> mkvar ((Variable.unique_name v) ^ "rofl")) fn.params
+        List.map (fun v -> mkvar ((Variable.unique_name v) ^ "_prime")) fn.params
       in
       let free_variables =
         List.fold_right Variable.Set.remove fn.params fn.free_variables
@@ -615,26 +621,40 @@ let unbox_returns tree =
       let free_variables =
         List.fold_right Variable.Set.add params free_variables
       in
-      let fu_closure_var = mkvar "set_of_closures" in
-      let fu_closure = Fvar(fu_closure_var, Expr_id.create()) in
-      let body =
+      let let_id = mkvar (fn_id_str ^ "_multireturn") in
+      let new_id = mkvar (fn_id_str ^ "_wrapper") in
+      let funs = Variable.Map.singleton new_id fn in
+      let call_orig_func =
         Fapply({
-          ap_function = Fvar(fn_id, Expr_id.create());
+          ap_function = Fvar(let_id, Expr_id.create());
           ap_arg = List.map (fun v -> Fvar(v, Expr_id.create())) params;
           ap_kind = Indirect;
           ap_dbg = Debuginfo.none;
         }, Expr_id.create())
       in
-      let new_fn_id = mkvar ((Variable.unique_name fn_id) ^ "_wrapper") in
-      let funs = Variable.Map.add new_fn_id {fn with body; params; free_variables} funs in
-      let closure_set = Fset_of_closures({set with cl_fun = {cl_fun with funs}}, dset) in
-      if !Clflags.dump_flambda then
-         Flet(Assigned, fu_closure_var, closure_set,
-              Fclosure({closure with fu_closure; fu_fun = Closure_id.wrap new_fn_id},
-                       Expr_id.create()),
-              Expr_id.create())
-      else
-        flam
-    | flam -> flam)
+      let body =
+        Flet(Assigned,
+             let_id,
+             Fclosure({closure with fu_closure = Fset_of_closures(
+               {set with cl_fun = {cl_fun with funs}}, dset); fu_fun = Closure_id.wrap new_id}, d),
+             Fprim(Pgetblock_noheap, [call_orig_func], Debuginfo.none, Expr_id.create()),
+             Expr_id.create())
+      in
+      let new_fun = {body; params; free_variables; stub = true; dbg = Debuginfo.none} in
+      let new_funs = Variable.Map.singleton fn_id new_fun in
+      Fclosure({
+        fu_closure = Fset_of_closures({
+          cl_fun = {
+            ident = Set_of_closures_id.create cl_fun.compilation_unit;
+            funs = new_funs;
+            compilation_unit = cl_fun.compilation_unit;
+          };
+          cl_free_var = Variable.Map.empty;
+          cl_specialised_arg = Variable.Map.empty;
+        }, Expr_id.create());
+        fu_fun = Closure_id.wrap fn_id;
+        fu_relative_to = None;
+      }, Expr_id.create())
+   | flam -> flam)
     tree
 

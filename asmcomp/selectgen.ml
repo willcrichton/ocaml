@@ -837,6 +837,7 @@ method private emit_tail_sequence env exp =
 
 (* Sequentialization of a function definition *)
 
+(* TODO(wcrichton): potentially change calling convention here *)
 method emit_fundecl f =
   Proc.contains_calls := false;
   current_function_name := f.Cmm.fun_name;

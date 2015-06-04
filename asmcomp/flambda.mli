@@ -156,8 +156,8 @@ and 'a fset_of_closures = {
          f x y 1;
          f x y 1]
       the specialised arguments of f can (but does not necessarily) contain
-      the assotiation [a] -> [x], but cannot contain [b] -> [y] because [f]
-      is not in the scope of [y]. If f where the recursive function,
+      the association [a] -> [x], but cannot contain [b] -> [y] because [f]
+      is not in the scope of [y]. If f were the recursive function,
       [let rec f a b c = f a 1 2 in], [a] -> [x] whould still be a valid
       specialised argument because all recursive calls maintain the invariant.
 
@@ -181,7 +181,7 @@ and 'a fset_of_closures = {
            map succ l]
       with map having [f] -> [succ] in his [cl_specialised_arg] field.
 
-      Note that it is usualy not correct to erase this information if the
+      Note that it is usually not correct to erase this information if the
       argument is used.
   *)
 }
