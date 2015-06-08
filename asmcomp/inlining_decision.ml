@@ -36,6 +36,7 @@ let inline_non_recursive
     ~probably_a_functor
     ~args
     ~loop =
+  if not func.stub then no_transformation() else (* TODO(wcrichton) remove me *)
   let body, r_inlined =
     (* We first try to inline that function preventing further inlining below *)
     inline_by_copying_function_body ~env

@@ -53,6 +53,8 @@ type operation =
   | Inegf | Iabsf | Iaddf | Isubf | Imulf | Idivf
   | Ifloatofint | Iintoffloat
   | Ispecific of Arch.specific_operation
+  | Imultiload
+  | Imultistore
 
 type instruction =
   { desc: instruction_desc;
@@ -75,11 +77,12 @@ and instruction_desc =
   | Iraise of Lambda.raise_kind
 
 type fundecl =
-  { fun_name: string;
-    fun_args: Reg.t array;
-    fun_body: instruction;
-    fun_fast: bool;
-    fun_dbg : Debuginfo.t }
+  { fun_name  : string;
+    fun_args  : Reg.t array;
+    fun_body  : instruction;
+    fun_fast  : bool;
+    fun_return: Flambda.return_kind;
+    fun_dbg   : Debuginfo.t }
 
 let rec dummy_instr =
   { desc = Iend;

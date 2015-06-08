@@ -457,7 +457,7 @@ let rec remove_unit = function
   | Clet(id, c1, c2) ->
       Clet(id, c1, remove_unit c2)
   | Cop(Capply (mty, dbg), args) ->
-      Cop(Capply (typ_void, dbg), args)
+      Cop(Capply ([|typ_void|], dbg), args)
   | Cop(Cextcall(proc, mty, alloc, dbg), args) ->
       Cop(Cextcall(proc, typ_void, alloc, dbg), args)
   | Cexit (_,_) as c -> c
@@ -576,7 +576,7 @@ let call_cached_method obj tag cache pos args dbg =
   let arity = List.length args in
   let cache = array_indexing log2_size_addr cache pos in
   Compilenv.need_send_fun arity;
-  Cop(Capply (typ_addr, dbg),
+  Cop(Capply ([|typ_addr|], dbg),
       Cconst_symbol("caml_send" ^ string_of_int arity) ::
       obj :: tag :: cache :: args)
 
@@ -1201,6 +1201,10 @@ type unboxed_number_kind =
   | Boxed_float
   | Boxed_integer of boxed_integer
 
+let is_unboxed_function = function
+  | Uprim(Pgetblock_noheap, _, _) as fn -> (Printclambda.clambda Format.std_formatter fn; true)
+  | _ -> false
+
 let rec is_unboxed_number = function
     Uconst(Uconst_ref(_, Some (Uconst_float _))) ->
       Boxed_float
@@ -1272,7 +1276,7 @@ let subst_boxed_number unbox_fn boxed_id unboxed_id box_chunk box_offset exp =
         if Ident.same id boxed_id && chunk = box_chunk && box_offset = 0
         then Cvar unboxed_id
         else e
-    (* TODO(wcrichton): projection to field of a block occurs here *)
+    (* TODO(wcrichton) projection to field of a block occurs here *)
     | Cop(Cload chunk, [Cop(Cadda, [Cvar id; Cconst_int ofs])]) as e ->
         if Ident.same id boxed_id && chunk = box_chunk && ofs = box_offset
         then Cvar unboxed_id
@@ -1339,25 +1343,27 @@ let rec transl = function
       Cop(Calloc, transl_fundecls 0 fundecls)
   | Uoffset(arg, offset) ->
       field_address (transl arg) offset
-  | Udirect_apply(lbl, args, dbvg) ->
-      Cop(Capply(typ_addr, dbg), Cconst_symbol lbl :: List.map transl args)
+  | Udirect_apply(lbl, args, dbg) ->
+      Cop(Capply([|typ_addr|], dbg), Cconst_symbol lbl :: List.map transl args)
   | Ugeneric_apply(clos, [arg], dbg) ->
       bind "fun" (transl clos) (fun clos ->
-        Cop(Capply(typ_addr, dbg), [get_field clos 0; transl arg; clos]))
+        Cop(Capply([|typ_addr|], dbg), [get_field clos 0; transl arg; clos]))
+  | Umulti_apply(lbl, args, dbg) ->
+      Cop(Capply([|typ_addr|], dbg), Cconst_symbol lbl :: List.map transl args)
   | Ugeneric_apply(clos, args, dbg) ->
       let arity = List.length args in
       let cargs = Cconst_symbol(apply_function arity) ::
         List.map transl (args @ [clos]) in
-      Cop(Capply(typ_addr, dbg), cargs)
+      Cop(Capply([|typ_addr|], dbg), cargs)
   | Usend(kind, met, obj, args, dbg) ->
       let call_met obj args clos =
         if args = [] then
-          Cop(Capply(typ_addr, dbg), [get_field clos 0;obj;clos])
+          Cop(Capply([|typ_addr|], dbg), [get_field clos 0;obj;clos])
         else
           let arity = List.length args + 1 in
           let cargs = Cconst_symbol(apply_function arity) :: obj ::
             (List.map transl args) @ [clos] in
-          Cop(Capply(typ_addr, dbg), cargs)
+          Cop(Capply([|typ_addr|], dbg), cargs)
       in
       bind "obj" (transl obj) (fun obj ->
         match kind, args with
@@ -1369,6 +1375,9 @@ let rec transl = function
         | _ ->
             bind "met" (lookup_tag obj (transl met)) (call_met obj args))
   | Ulet(id, exp, body) ->
+      if !Clflags.dump_flambda then
+        ignore(is_unboxed_function exp)
+      else () ;
       begin match is_unboxed_number exp with
         No_unboxing ->
           Clet(id, transl exp, transl body)
@@ -1394,10 +1403,10 @@ let rec transl = function
           assert false
       | (Pmakeblock(tag, mut), args) ->
           make_alloc tag (List.map transl args)
-      | (Pmakeblock_noheap(tag), args) ->
-          make_alloc tag (List.map transl args)
+      | (Pmakeblock_noheap _, args) ->
+          Cop(Cmultistore, (List.map transl args))
       | (Pgetblock_noheap, args) ->
-          transl (List.nth args 0)
+          Cop(Cmultiload, (List.map transl args))
       | (Pccall prim, args) ->
           if prim.prim_native_float then
             box_float
@@ -2225,6 +2234,7 @@ let transl_function f =
              fun_args = List.map (fun id -> (id, typ_addr)) f.params;
              fun_body = transl f.body;
              fun_fast = !Clflags.optimize_for_speed;
+             fun_return = f.return;
              fun_dbg  = f.dbg; }
 
 (* Translate all function definitions *)
@@ -2395,6 +2405,7 @@ let compunit size ulam =
   let c1 = [Cfunction {fun_name = Compilenv.make_symbol (Some "entry");
                        fun_args = [];
                        fun_body = init_code; fun_fast = false;
+                       fun_return = Flambda.Normal_return;
                        fun_dbg  = Debuginfo.none }] in
   let rec aux set c1 =
     if Compilenv.structured_constants () = [] &&
@@ -2486,12 +2497,12 @@ let apply_function_body arity =
   let clos = Ident.create "clos" in
   let rec app_fun clos n =
     if n = arity-1 then
-      Cop(Capply(typ_addr, Debuginfo.none),
+      Cop(Capply([|typ_addr|], Debuginfo.none),
           [get_field (Cvar clos) 0; Cvar arg.(n); Cvar clos])
     else begin
       let newclos = Ident.create "clos" in
       Clet(newclos,
-           Cop(Capply(typ_addr, Debuginfo.none),
+           Cop(Capply([|typ_addr|], Debuginfo.none),
                [get_field (Cvar clos) 0; Cvar arg.(n); Cvar clos]),
            app_fun newclos (n+1))
     end in
@@ -2501,7 +2512,7 @@ let apply_function_body arity =
    if arity = 1 then app_fun clos 0 else
    Cifthenelse(
    Cop(Ccmpi Ceq, [get_field (Cvar clos) 1; int_const arity]),
-   Cop(Capply(typ_addr, Debuginfo.none),
+   Cop(Capply([|typ_addr|], Debuginfo.none),
        get_field (Cvar clos) 2 :: List.map (fun s -> Cvar s) all_args),
    app_fun clos 0))
 
@@ -2541,6 +2552,7 @@ let send_function arity =
     fun_args = fun_args;
     fun_body = body;
     fun_fast = true;
+    fun_return = Flambda.Normal_return;
     fun_dbg  = Debuginfo.none }
 
 let apply_function arity =
@@ -2551,6 +2563,7 @@ let apply_function arity =
     fun_args = List.map (fun id -> (id, typ_addr)) all_args;
     fun_body = body;
     fun_fast = true;
+    fun_return = Flambda.Normal_return;
     fun_dbg  = Debuginfo.none }
 
 (* Generate tuplifying functions:
@@ -2568,9 +2581,10 @@ let tuplify_function arity =
    {fun_name = "caml_tuplify" ^ string_of_int arity;
     fun_args = [arg, typ_addr; clos, typ_addr];
     fun_body =
-      Cop(Capply(typ_addr, Debuginfo.none),
+      Cop(Capply([|typ_addr|], Debuginfo.none),
           get_field (Cvar clos) 2 :: access_components 0 @ [Cvar clos]);
     fun_fast = true;
+    fun_return = Flambda.Normal_return;
     fun_dbg  = Debuginfo.none }
 
 (* Generate currying functions:
@@ -2607,7 +2621,7 @@ let final_curry_function arity =
   let last_clos = Ident.create "clos" in
   let rec curry_fun args clos n =
     if n = 0 then
-      Cop(Capply(typ_addr, Debuginfo.none),
+      Cop(Capply([|typ_addr|], Debuginfo.none),
           get_field (Cvar clos) 2 ::
           args @ [Cvar last_arg; Cvar clos])
     else
@@ -2630,6 +2644,7 @@ let final_curry_function arity =
     fun_args = [last_arg, typ_addr; last_clos, typ_addr];
     fun_body = curry_fun [] last_clos (arity-1);
     fun_fast = true;
+    fun_return = Flambda.Normal_return;
     fun_dbg  = Debuginfo.none }
 
 let rec intermediate_curry_functions arity num =
@@ -2657,6 +2672,7 @@ let rec intermediate_curry_functions arity num =
                       Cconst_symbol(name1 ^ "_" ^ string_of_int (num+1));
                       int_const 1; Cvar arg; Cvar clos]);
       fun_fast = true;
+      fun_return = Flambda.Normal_return;
       fun_dbg  = Debuginfo.none }
     ::
       (if arity <= max_arity_optimized && arity - num > 2 then
@@ -2669,7 +2685,7 @@ let rec intermediate_curry_functions arity num =
           let direct_args = iter (num+2) in
           let rec iter i args clos =
             if i = 0 then
-              Cop(Capply(typ_addr, Debuginfo.none),
+              Cop(Capply([|typ_addr|], Debuginfo.none),
                   (get_field (Cvar clos) 2) :: args @ [Cvar clos])
             else
               let newclos = Ident.create "clos" in
@@ -2684,6 +2700,7 @@ let rec intermediate_curry_functions arity num =
                fun_body = iter (num+1)
                   (List.map (fun (arg,_) -> Cvar arg) direct_args) clos;
                fun_fast = true;
+               fun_return = Flambda.Normal_return;
                fun_dbg = Debuginfo.none }
           in
           cf :: intermediate_curry_functions arity (num+1)
@@ -2739,7 +2756,7 @@ let entry_point namelist =
     List.fold_right
       (fun name next ->
         let entry_sym = Compilenv.make_symbol ~unitname:name (Some "entry") in
-        Csequence(Cop(Capply(typ_void, Debuginfo.none),
+        Csequence(Cop(Capply([|typ_void|], Debuginfo.none),
                          [Cconst_symbol entry_sym]),
                   Csequence(incr_global_inited, next)))
       namelist (Cconst_int 1) in
@@ -2747,6 +2764,7 @@ let entry_point namelist =
              fun_args = [];
              fun_body = body;
              fun_fast = false;
+             fun_return = Flambda.Normal_return;
              fun_dbg  = Debuginfo.none }
 
 (* Generate the table of globals *)

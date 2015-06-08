@@ -90,6 +90,11 @@ type let_kind =
 type call_kind =
   | Indirect
   | Direct of Closure_id.t
+  | Direct_multi of Closure_id.t
+
+type return_kind =
+  | Normal_return
+  | Multi_return
 
 type const =
   (* Note: no structured constants *)
@@ -195,6 +200,9 @@ and 'a function_declarations = {
 and 'a function_declaration = {
   params : Variable.t list;
   body : 'a flambda;
+  return : return_kind;
+  (** If return is Multi_return, then the function returns blocks but not on
+      the heap, using a special optimized return convention instead. *)
   free_variables : Variable.Set.t;
   (** All variables free in the *body* of the function.  For example, a
       variable that is bound as one of the function's parameters will still

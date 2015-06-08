@@ -37,6 +37,7 @@ and ulambda =
     Uvar of Ident.t
   | Uconst of uconstant
   | Udirect_apply of function_label * ulambda list * Debuginfo.t
+  | Umulti_apply of function_label * ulambda list * Debuginfo.t
   | Ugeneric_apply of ulambda * ulambda list * Debuginfo.t
   | Uclosure of ufunction list * ulambda list
   | Uoffset of ulambda * int
@@ -61,6 +62,7 @@ and ufunction = {
   arity  : int;
   params : Ident.t list;
   body   : ulambda;
+  return : Flambda.return_kind;
   dbg    : Debuginfo.t;
 }
 

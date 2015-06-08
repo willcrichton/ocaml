@@ -26,7 +26,9 @@ let rec lam ppf = function
   | Fapply({ap_function; ap_arg; ap_kind},_) ->
       let lams ppf largs =
         List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in
-      let direct = match ap_kind with Indirect -> "" | Direct _ -> "*" in
+      let direct = match ap_kind with
+          Indirect -> "" | Direct _ -> "*" | Direct_multi _ -> "@"
+      in
       fprintf ppf "@[<2>(apply%s@ %a%a)@]" direct lam ap_function lams ap_arg
   | Fclosure({fu_closure;fu_fun;fu_relative_to = None},_) ->
       fprintf ppf "@[<2>(function@ %a@ %a)@]" Closure_id.print fu_fun lam fu_closure

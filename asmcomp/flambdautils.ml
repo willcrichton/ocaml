@@ -254,6 +254,7 @@ let make_closure_declaration ~id ~body ~params : _ Flambda.t =
       params = List.map subst params;
       free_variables = Variable.Set.map subst free_variables;
       body;
+      return = Flambda.Normal_return;
       dbg = Debuginfo.none;
     }
   in

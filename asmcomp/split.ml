@@ -207,8 +207,4 @@ let fundecl f =
   repres_regs new_args;
   set_repres new_body;
   equiv_classes := Reg.Map.empty;
-  { fun_name = f.fun_name;
-    fun_args = new_args;
-    fun_body = new_body;
-    fun_fast = f.fun_fast;
-    fun_dbg  = f.fun_dbg }
+  { f with fun_args = new_args; fun_body = new_body; }

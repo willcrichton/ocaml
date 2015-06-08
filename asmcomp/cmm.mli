@@ -51,11 +51,13 @@ type memory_chunk =
   | Double_u                            (* word-aligned 64-bit float *)
 
 type operation =
-    Capply of machtype * Debuginfo.t
+    Capply of machtype array * Debuginfo.t
   | Cextcall of string * machtype * bool * Debuginfo.t
   | Cload of memory_chunk
   | Calloc
   | Cstore of memory_chunk
+  | Cmultistore
+  | Cmultiload
   | Caddi | Csubi | Cmuli | Cmulhi | Cdivi | Cmodi
   | Cand | Cor | Cxor | Clsl | Clsr | Casr
   | Ccmpi of comparison
@@ -94,6 +96,7 @@ type fundecl =
     fun_args: (Ident.t * machtype) list;
     fun_body: expression;
     fun_fast: bool;
+    fun_return: Flambda.return_kind;
     fun_dbg : Debuginfo.t; }
 
 type data_item =

@@ -37,6 +37,7 @@ and ulambda =
     Uvar of Ident.t
   | Uconst of uconstant
   | Udirect_apply of function_label * ulambda list * Debuginfo.t
+  | Umulti_apply of function_label * ulambda list * Debuginfo.t
   | Ugeneric_apply of ulambda * ulambda list * Debuginfo.t
   | Uclosure of ufunction list * ulambda list
   | Uoffset of ulambda * int
@@ -61,6 +62,7 @@ and ufunction = {
   arity  : int;
   params : Ident.t list;
   body   : ulambda;
+  return : Flambda.return_kind;
   dbg    : Debuginfo.t
 }
 
@@ -143,7 +145,7 @@ let compare_structured_constants c1 c2 =
   | Uconst_int32 x1, Uconst_int32 x2 -> Int32.compare x1 x2
   | Uconst_int64 x1, Uconst_int64 x2 -> Int64.compare x1 x2
   | Uconst_nativeint x1, Uconst_nativeint x2 -> Nativeint.compare x1 x2
-  | Uconst_block(t1, l1), Uconst_block(t2, l2) -> 
+  | Uconst_block(t1, l1), Uconst_block(t2, l2) ->
       let c = t1 - t2 (* no overflow possible here *) in
       if c <> 0 then c else compare_constant_lists l1 l2
   | Uconst_float_array l1, Uconst_float_array l2 ->

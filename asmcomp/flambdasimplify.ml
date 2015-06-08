@@ -484,6 +484,7 @@ let make_stub unused var (fun_decl : _ Flambda.function_declaration) =
     body;
     free_variables;
     stub = true;
+    return = Flambda.Normal_return;
     dbg = fun_decl.dbg;
   }
   in
@@ -593,54 +594,91 @@ let unbox_returns tree =
       let funs =
         Variable.Map.map
           (fun ({body} as fn : 'a function_declaration) ->
-             let unbox_return (acc, flam) =
+             let unbox_return ((can_unbox, num_returns), flam) =
                match flam with
                (* TODO(wcrichton): other return sites that matter? *)
                | Fprim(Pmakeblock(tag, Immutable), arg, dbg, attr) ->
-                 (acc, Fprim(Pmakeblock_noheap(tag), arg, dbg, attr))
-               | Fstaticraise _ -> (acc, flam)
-               | _ -> (false, flam)
+                 ((can_unbox, List.length arg),
+                  Fprim(Pmakeblock_noheap(tag), arg, dbg, attr))
+               | Fstaticraise _ -> ((can_unbox, num_returns), flam)
+               | _ -> ((false, num_returns), flam)
              in
-             let (can_unbox, unboxed_closure) =
-               Flambdaiter.fold_return_sites unbox_return true body
+             let ((can_unbox, num_returns), unboxed_body) =
+               Flambdaiter.fold_return_sites unbox_return (true, 0) body
              in
-             if can_unbox then ({fn with body = unboxed_closure}, true)
-             else (fn, false))
+             let new_fn = if can_unbox then {fn with body = unboxed_body} else fn
+             in (new_fn, can_unbox, num_returns))
           cl_fun.funs
       in
-      let mkvar = Variable.create ~current_compilation_unit:cl_fun.compilation_unit in
-      let (fn_id, (fn, was_unboxed)) = Variable.Map.choose funs in
-      if (not was_unboxed) then flam else
-      let fn_id_str = Variable.unique_name fn_id in
-      let params =
-        List.map (fun v -> mkvar ((Variable.unique_name v) ^ "_prime")) fn.params
+      let mkvar s v =
+        Variable.create
+          ~current_compilation_unit:cl_fun.compilation_unit
+          ((Variable.unique_name v) ^ s)
       in
+      let (fn_id, (fn, was_unboxed, num_returns)) = Variable.Map.choose funs in
+      if (not was_unboxed) then flam else
+      let params = List.map (mkvar "_prime") fn.params in
       let free_variables =
         List.fold_right Variable.Set.remove fn.params fn.free_variables
       in
-      let free_variables =
-        List.fold_right Variable.Set.add params free_variables
-      in
-      let let_id = mkvar (fn_id_str ^ "_multireturn") in
-      let new_id = mkvar (fn_id_str ^ "_wrapper") in
+      let free_variables = List.fold_right Variable.Set.add params free_variables in
+      let let_id = mkvar "_multireturn" fn_id in
+      let new_id = mkvar "_unboxed" fn_id in
       let funs = Variable.Map.singleton new_id fn in
-      let call_orig_func =
-        Fapply({
-          ap_function = Fvar(let_id, Expr_id.create());
-          ap_arg = List.map (fun v -> Fvar(v, Expr_id.create())) params;
-          ap_kind = Indirect;
-          ap_dbg = Debuginfo.none;
-        }, Expr_id.create())
+      let unboxed_return_id = mkvar "_unboxed_return" fn_id in
+      let result_vars =
+        let rec builder = function
+          | 0 -> []
+          | n -> ("_result" ^ (string_of_int (n - 1))) :: (builder (n - 1))
+        in List.map (fun s -> mkvar s fn_id) (List.rev (builder num_returns))
+      in
+      let result =
+        Fprim(
+          Pmakeblock(0, Immutable),
+          List.map (fun v -> Fvar(v, Expr_id.create())) result_vars,
+          Debuginfo.none,
+          Expr_id.create())
+      in
+      let bindings =
+        List.fold_left
+          (fun acc (index, result_var) ->
+             Flet(
+               Not_assigned,
+               result_var,
+               Fprim(Pgetblock_noheap,
+                     [Fvar(unboxed_return_id, Expr_id.create());
+                      Fconst(Fconst_base(Const_int(index)), Expr_id.create())],
+                     Debuginfo.none,
+                     Expr_id.create()),
+               acc,
+               Expr_id.create()))
+          result
+          (List.mapi (fun i x -> (i, x)) result_vars)
+      in
+      let toplevel =
+        Flet(
+          Not_assigned,
+          unboxed_return_id,
+          Fapply({
+            ap_function = Fvar(let_id, Expr_id.create());
+            ap_arg = List.map (fun v -> Fvar(v, Expr_id.create())) params;
+            ap_kind = Direct(Closure_id.wrap new_id);
+            ap_dbg = Debuginfo.none;
+          }, Expr_id.create()),
+          bindings,
+          Expr_id.create())
       in
       let body =
-        Flet(Assigned,
-             let_id,
-             Fclosure({closure with fu_closure = Fset_of_closures(
-               {set with cl_fun = {cl_fun with funs}}, dset); fu_fun = Closure_id.wrap new_id}, d),
-             Fprim(Pgetblock_noheap, [call_orig_func], Debuginfo.none, Expr_id.create()),
-             Expr_id.create())
+        Flet(
+          Not_assigned,
+          let_id,
+          Fclosure({closure with fu_closure = Fset_of_closures(
+            {set with cl_fun = {cl_fun with funs}}, dset); fu_fun = Closure_id.wrap new_id}, d),
+          toplevel,
+          Expr_id.create())
       in
-      let new_fun = {body; params; free_variables; stub = true; dbg = Debuginfo.none} in
+      let new_fun = {body; params; free_variables; return = Flambda.Normal_return;
+                     stub = true; dbg = Debuginfo.none} in
       let new_funs = Variable.Map.singleton fn_id new_fun in
       Fclosure({
         fu_closure = Fset_of_closures({

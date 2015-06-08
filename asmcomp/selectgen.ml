@@ -23,7 +23,7 @@ type environment = (Ident.t, Reg.t array array) Tbl.t
 (* Infer the type of the result of an operation *)
 
 let oper_result_type = function
-    Capply(ty, _) -> ty
+    Capply(ty, _) -> ty.(0) (* TODO(wcrichton) *)
   | Cextcall(s, ty, alloc, _) -> ty
   | Cload c ->
       begin match c with
@@ -33,6 +33,8 @@ let oper_result_type = function
       end
   | Calloc -> typ_addr
   | Cstore c -> typ_void
+  | Cmultistore -> typ_addr (* TODO(wcrichton), kind of a hack *)
+  | Cmultiload -> typ_addr
   | Caddi | Csubi | Cmuli | Cmulhi | Cdivi | Cmodi |
     Cand | Cor | Cxor | Clsl | Clsr | Casr |
     Ccmpi _ | Ccmpa _ | Ccmpf _ -> typ_int
@@ -262,6 +264,9 @@ method select_operation op args =
         (Istore(chunk, addr, true), [arg2; eloc])
         (* Inversion addr/datum in Istore *)
       end
+  | (Cmultistore, _) -> (Imultistore, args)
+  | (Cmultiload, Cconst_symbol s :: rem) -> (print_string s; (Imultiload, rem))
+  | (Cmultiload, _) -> (Imultiload, args)
   | (Calloc, _) -> (Ialloc 0, args)
   | (Caddi, _) -> self#select_arith_comm Iadd args
   | (Csubi, _) -> self#select_arith Isub args
@@ -745,7 +750,7 @@ method emit_tail env exp =
                 self#insert (Iop Itailcall_ind)
                             (Array.append [|r1.(0)|] loc_arg) [||]
               end else begin
-                let rd = self#regs_for ty in
+                let rd = self#regs_for ty.(0) in
                 let loc_res = Proc.loc_results rd in
                 self#insert_move_args rarg loc_arg stack_ofs;
                 self#insert_debug (Iop Icall_ind) dbg
@@ -764,7 +769,7 @@ method emit_tail env exp =
                 self#insert_moves r1 loc_arg';
                 self#insert (Iop(Itailcall_imm lbl)) loc_arg' [||]
               end else begin
-                let rd = self#regs_for ty in
+                let rd = self#regs_for ty.(0) in
                 let loc_res = Proc.loc_results rd in
                 self#insert_move_args r1 loc_arg stack_ofs;
                 self#insert_debug (Iop(Icall_imm lbl)) dbg loc_arg loc_res;
@@ -859,6 +864,7 @@ method emit_fundecl f =
     fun_args = loc_arg;
     fun_body = body;
     fun_fast = f.Cmm.fun_fast;
+    fun_return = f.Cmm.fun_return;
     fun_dbg  = f.Cmm.fun_dbg }
 
 end

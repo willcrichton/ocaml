@@ -403,8 +403,4 @@ let fundecl f =
     add_spills (Reg.inter_set_array tospill_at_entry f.fun_args) body2 in
   spill_env := Reg.Map.empty;
   use_date := Reg.Map.empty;
-  { fun_name = f.fun_name;
-    fun_args = f.fun_args;
-    fun_body = new_body;
-    fun_fast = f.fun_fast;
-    fun_dbg  = f.fun_dbg }
+  { f with fun_body = new_body }

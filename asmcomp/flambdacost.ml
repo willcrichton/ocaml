@@ -64,7 +64,7 @@ let lambda_smaller' lam ~than:threshold =
         assert false
         (* should be moved out by a previous pass: see [List_string] *)
     | Fapply ({ ap_function = fn; ap_arg = args; ap_kind = direct }, _) ->
-        let call_cost = match direct with Indirect -> 6 | Direct _ -> 4 in
+        let call_cost = match direct with Indirect -> 6 | Direct _ | Direct_multi _ -> 4 in
         size := !size + call_cost; lambda_size fn; lambda_list_size args
     | Fset_of_closures({ cl_fun = ffuns; cl_free_var = fv }, _) ->
         Variable.Map.iter (fun _ -> lambda_size) fv;

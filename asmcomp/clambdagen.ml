@@ -337,6 +337,11 @@ module Conv(P:Param2) = struct
            added here. *)
         Ugeneric_apply(conv env funct, conv_list env args, dbg)
 
+    | Fapply({ ap_function = funct; ap_arg = args;
+               ap_kind = Direct_multi direct_func; ap_dbg = dbg }, _) ->
+        let label = Compilenv.function_label direct_func in
+        Umulti_apply(label, conv_list env args, dbg)
+
     | Fswitch(arg, sw, d) ->
         let aux () =
           let const_index, const_actions =
@@ -610,6 +615,7 @@ module Conv(P:Param2) = struct
         arity = Flambdautils.function_arity func;
         params = if closed then params else params @ [env_var];
         body = conv env_body func.body;
+        return = func.return;
         dbg = func.dbg } in
 
     let ufunct = List.map conv_function funct in

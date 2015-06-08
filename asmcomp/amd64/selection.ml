@@ -87,6 +87,7 @@ let pseudoregs_for_operation op arg res =
   | Iabsf | Inegf
   | Ispecific(Ibswap (32|64)) ->
       (res, res)
+  (*| Imultiload -> ([|rax; rcx|], res)*)
   (* For xchg, args must be a register allowing access to high 8 bit register
      (rax, rbx, rcx or rdx). Keep it simple, just force the argument in rax. *)
   | Ispecific(Ibswap 16) ->

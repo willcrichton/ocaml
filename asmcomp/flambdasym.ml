@@ -525,6 +525,7 @@ module Conv(P:Param1) = struct
     | Fapply({ap_function = funct; ap_arg = args; ap_kind = direct; ap_dbg = dbg}, _) ->
         let ufunct, fun_approx = conv_approx env funct in
         let direct = match direct with
+          | Direct_multi _
           | Direct _ -> direct
           | Indirect -> match get_descr fun_approx with
             (* We mark some calls as direct when it is unknown:

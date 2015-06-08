@@ -55,6 +55,7 @@ and lam ppf = function
   | Uvar id ->
       Ident.print ppf id
   | Uconst c -> uconstant ppf c
+  | Umulti_apply(f, largs, _)
   | Udirect_apply(f, largs, _) ->
       let lams ppf largs =
         List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in
