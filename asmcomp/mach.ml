@@ -53,7 +53,7 @@ type operation =
   | Inegf | Iabsf | Iaddf | Isubf | Imulf | Idivf
   | Ifloatofint | Iintoffloat
   | Ispecific of Arch.specific_operation
-  | Imultiload
+  | Imultiload of int
   | Imultistore
 
 type instruction =

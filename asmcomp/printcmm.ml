@@ -59,7 +59,7 @@ let operation = function
   | Cload c -> Printf.sprintf "load %s" (chunk c)
   | Calloc -> "alloc"
   | Cstore Word -> "store"
-  | Cmultiload -> "multiload"
+  | Cmultiload n -> Printf.sprintf "multiload %d" n
   | Cmultistore -> "multistore"
   | Cstore c -> Printf.sprintf "store %s" (chunk c)
   | Caddi -> "+"

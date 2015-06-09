@@ -1201,10 +1201,6 @@ type unboxed_number_kind =
   | Boxed_float
   | Boxed_integer of boxed_integer
 
-let is_unboxed_function = function
-  | Uprim(Pgetblock_noheap, _, _) as fn -> (Printclambda.clambda Format.std_formatter fn; true)
-  | _ -> false
-
 let rec is_unboxed_number = function
     Uconst(Uconst_ref(_, Some (Uconst_float _))) ->
       Boxed_float
@@ -1374,9 +1370,6 @@ let rec transl = function
         | _ ->
             bind "met" (lookup_tag obj (transl met)) (call_met obj args))
   | Ulet(id, exp, body) ->
-      if !Clflags.dump_flambda then
-        ignore(is_unboxed_function exp)
-      else () ;
       begin match is_unboxed_number exp with
         No_unboxing ->
           Clet(id, transl exp, transl body)
@@ -1404,8 +1397,8 @@ let rec transl = function
           make_alloc tag (List.map transl args)
       | (Pmakeblock_noheap _, args) ->
           Cop(Cmultistore, (List.map transl args))
-      | (Pgetblock_noheap, args) ->
-          Cop(Cmultiload, (List.map transl args))
+      | (Pgetblock_noheap i, args) ->
+          Cop(Cmultiload(i), (List.map transl args))
       | (Pccall prim, args) ->
           if prim.prim_native_float then
             box_float

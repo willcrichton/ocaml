@@ -648,9 +648,8 @@ let unbox_returns tree =
              Flet(
                Not_assigned,
                result_var,
-               Fprim(Pgetblock_noheap,
-                     [Fvar(unboxed_return_id, Expr_id.create());
-                      Fconst(Fconst_base(Const_int(index)), Expr_id.create())],
+               Fprim(Pgetblock_noheap(index),
+                     [Fvar(unboxed_return_id, Expr_id.create())],
                      Debuginfo.none,
                      Expr_id.create()),
                acc,

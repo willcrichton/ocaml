@@ -23,27 +23,27 @@ type environment = (Ident.t, Reg.t array array) Tbl.t
 (* Infer the type of the result of an operation *)
 
 let oper_result_type = function
-    Capply(ty, _) -> ty.(0) (* TODO(wcrichton) *)
-  | Cextcall(s, ty, alloc, _) -> ty
+    Capply(ty, _) -> ty (* TODO(wcrichton) *)
+  | Cextcall(s, ty, alloc, _) -> [|ty|]
   | Cload c ->
       begin match c with
-        Word -> typ_addr
-      | Single | Double | Double_u -> typ_float
-      | _ -> typ_int
+        Word -> [|typ_addr|]
+      | Single | Double | Double_u -> [|typ_float|]
+      | _ -> [|typ_int|]
       end
-  | Calloc -> typ_addr
-  | Cstore c -> typ_void
-  | Cmultistore -> typ_addr (* TODO(wcrichton): turn fn into a machtype array *)
-  | Cmultiload -> typ_addr
+  | Calloc -> [|typ_addr|]
+  | Cstore c -> [|typ_void|]
+  | Cmultistore -> [|typ_addr; typ_addr|] (* TODO(wcrichton): turn fn into a machtype array *)
+  | Cmultiload _ -> [|typ_addr|] (* TODO(wcrichton): not necessarily typ_addr *)
   | Caddi | Csubi | Cmuli | Cmulhi | Cdivi | Cmodi |
     Cand | Cor | Cxor | Clsl | Clsr | Casr |
-    Ccmpi _ | Ccmpa _ | Ccmpf _ -> typ_int
-  | Cadda | Csuba -> typ_addr
-  | Cnegf | Cabsf | Caddf | Csubf | Cmulf | Cdivf -> typ_float
-  | Cfloatofint -> typ_float
-  | Cintoffloat -> typ_int
-  | Craise _ -> typ_void
-  | Ccheckbound _ -> typ_void
+    Ccmpi _ | Ccmpa _ | Ccmpf _ -> [|typ_int|]
+  | Cadda | Csuba -> [|typ_addr|]
+  | Cnegf | Cabsf | Caddf | Csubf | Cmulf | Cdivf -> [|typ_float|]
+  | Cfloatofint -> [|typ_float|]
+  | Cintoffloat -> [|typ_int|]
+  | Craise _ -> [|typ_void|]
+  | Ccheckbound _ -> [|typ_void|]
 
 (* Infer the size in bytes of the result of a simple expression *)
 
@@ -68,7 +68,7 @@ let size_expr env exp =
     | Ctuple el ->
         List.fold_right (fun e sz -> size localenv e + sz) el 0
     | Cop(op, args) ->
-        size_machtype(oper_result_type op)
+        size_machtype((oper_result_type op).(0)) (* TODO(wcrichton): what here? *)
     | Clet(id, arg, body) ->
         size (Tbl.add id (size localenv arg) localenv) body
     | Csequence(e1, e2) ->
@@ -265,8 +265,7 @@ method select_operation op args =
         (* Inversion addr/datum in Istore *)
       end
   | (Cmultistore, _) -> (Imultistore, args)
-  | (Cmultiload, Cconst_symbol s :: rem) -> (print_string s; (Imultiload, rem))
-  | (Cmultiload, _) -> (Imultiload, args)
+  | (Cmultiload i, _) -> (Imultiload i, args)
   | (Calloc, _) -> (Ialloc 0, args)
   | (Caddi, _) -> self#select_arith_comm Iadd args
   | (Csubi, _) -> self#select_arith Isub args
@@ -369,6 +368,8 @@ method select_condition = function
    in pairs of integer registers. *)
 
 method regs_for tys = Reg.createv tys
+
+method regs_for_multi tys = Array.map self#regs_for tys
 
 (* Buffering of instruction sequences *)
 
@@ -512,46 +513,55 @@ method emit_expr env exp =
           let dbg = debuginfo_op op in
           match new_op with
             Icall_ind ->
+              if Array.length ty > 1 then Misc.fatal_error("NO") else
               let r1 = self#emit_tuple env new_args in
               let rarg = Array.sub r1 1 (Array.length r1 - 1) in
-              let rd = self#regs_for ty in (* TODO(wcrichton): add #regs_for_multi *)
-               (* also fail if len(ty) > 1 *)
+              let rd = self#regs_for_multi ty in
               let (loc_arg, stack_ofs) = Proc.loc_arguments rarg in
-              let loc_res = Proc.loc_results rd in
+              let loc_res = Proc.loc_results rd.(0) in
               self#insert_move_args rarg loc_arg stack_ofs;
               self#insert_debug (Iop Icall_ind) dbg
                           (Array.append [|r1.(0)|] loc_arg) loc_res;
-              self#insert_move_results loc_res rd stack_ofs;
-              Some rd
-          | Icall_imm lbl -> (* Icall_imm should have arity as a parameter *)
+              self#insert_move_results loc_res rd.(0) stack_ofs;
+              Some rd.(0)
+          | Icall_imm lbl ->
               let r1 = self#emit_tuple env new_args in
-              let rd = self#regs_for ty in (* TODO(wcrichton): become #regs_for_multi *)
+              let rd = self#regs_for_multi ty in
+              let rd_flat = Array.concat (Array.to_list rd) in
               let (loc_arg, stack_ofs) = Proc.loc_arguments r1 in
-              let loc_res = Proc.loc_results rd in
+              let loc_res = Proc.loc_results rd_flat in
               self#insert_move_args r1 loc_arg stack_ofs;
               self#insert_debug (Iop(Icall_imm lbl)) dbg loc_arg loc_res;
-              self#insert_move_results loc_res rd stack_ofs;
-              Some rd
+              self#insert_move_results loc_res rd_flat stack_ofs;
+              Some rd_flat
           | Iextcall(lbl, alloc) ->
               let (loc_arg, stack_ofs) =
                 self#emit_extcall_args env new_args in
-              let rd = self#regs_for ty in
+              let rd = self#regs_for_multi ty in
               let loc_res = self#insert_op_debug (Iextcall(lbl, alloc)) dbg
-                                    loc_arg (Proc.loc_external_results rd) in
-              self#insert_move_results loc_res rd stack_ofs;
-              Some rd
+                                    loc_arg (Proc.loc_external_results rd.(0)) in
+              self#insert_move_results loc_res rd.(0) stack_ofs;
+              Some rd.(0)
           | Ialloc _ ->
               let rd = self#regs_for typ_addr in
               let size = size_expr env (Ctuple new_args) in
               self#insert (Iop(Ialloc size)) [||] rd;
               self#emit_stores env new_args rd;
               Some rd
-          | Imultistore -> ?? (* basically same as below except with regs_for_multi *)
-          | Imultiload  -> ?? (* emit tuple, regs_for (dest register), self#insert_move
-                                 r1.(?) -> rd *)
+          | Imultistore ->
+              let r1 = self#emit_tuple env new_args in
+              let rd = self#regs_for_multi ty in
+              Array.iteri (fun i r -> self#insert_move r rd.(i).(0)) r1;
+                (* TODO(wcrichton): ^ this doesn't look platform-independent *)
+              Some (Array.concat (Array.to_list rd))
+          | Imultiload index ->
+              let r1 = self#emit_tuple env new_args in
+              let rd = self#regs_for ty.(0) in
+              self#insert_move r1.(index) rd.(0);
+              Some rd
           | op ->
               let r1 = self#emit_tuple env new_args in
-              let rd = self#regs_for ty in
+              let rd = self#regs_for ty.(0) in
               Some (self#insert_op_debug op dbg r1 rd)
       end
   | Csequence(e1, e2) ->

@@ -583,8 +583,7 @@ module Conv(P:Param1) = struct
         Fprim(Lambda.Psetglobalfield (ex, i), [uarg], dbg, ()),
         Value_unknown
 
-    | Fprim(Lambda.Pmakeblock(tag, Asttypes.Immutable) as p, args, dbg, _)
-    | Fprim(Lambda.Pmakeblock_noheap(tag) as p, args, dbg, _) ->
+    | Fprim(Lambda.Pmakeblock(tag, Asttypes.Immutable) as p, args, dbg, _) ->
         let args, approxs = conv_list_approx env args in
         let block = Fprim(p, args, dbg, ()) in
         let ex = new_descr (Value_block (tag, Array.of_list approxs)) in
@@ -593,6 +592,8 @@ module Conv(P:Param1) = struct
         else
           let sym = add_constant block ex in
           Fsymbol(sym, ()), Value_symbol sym
+
+    (* TODO(wcrichton): add something for makeblock_noheap here? *)
 
 (*  (* If global mutables are allowed: *)
     | Fprim(Lambda.Pmakeblock(tag, Asttypes.Mutable) as p, args, dbg, _)

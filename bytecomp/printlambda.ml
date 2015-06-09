@@ -125,7 +125,7 @@ let primitive ppf = function
   | Psetfloatfield n -> fprintf ppf "setfloatfield %i" n
   | Pduprecord (rep, size) -> fprintf ppf "duprecord %a %i" record_rep rep size
   | Pmakeblock_noheap tag -> fprintf ppf "makeblock_noheap %i" tag
-  | Pgetblock_noheap -> fprintf ppf "getblock_noheap"
+  | Pgetblock_noheap n -> fprintf ppf "getblock_noheap %d" n
   | Plazyforce -> fprintf ppf "force"
   | Pccall p -> fprintf ppf "%s" p.prim_name
   | Praise k -> fprintf ppf "%s" (Lambda.raise_kind k)

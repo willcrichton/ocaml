@@ -43,6 +43,8 @@ class virtual selector_generic : object
        Default implementation is like Reg.createv.
        Can be overridden if float values are stored as pairs of
        integer registers. *)
+  method regs_for_multi : Cmm.machtype array -> Reg.t array array
+    (* TODO(wcrichton): insert docs here *)
   method insert_op :
     Mach.operation -> Reg.t array -> Reg.t array -> Reg.t array
     (* Can be overridden to deal with 2-address instructions

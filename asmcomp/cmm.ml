@@ -71,7 +71,7 @@ type operation =
   | Calloc
   | Cstore of memory_chunk
   | Cmultistore
-  | Cmultiload
+  | Cmultiload of int
   | Caddi | Csubi | Cmuli | Cmulhi | Cdivi | Cmodi
   | Cand | Cor | Cxor | Clsl | Clsr | Casr
   | Ccmpi of comparison

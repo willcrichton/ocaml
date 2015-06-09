@@ -140,7 +140,7 @@ let operation op arg ppf res =
   | Ispecific op ->
       Arch.print_specific_operation reg op ppf arg
   | Imultistore -> fprintf ppf "multistore %a" regs arg
-  | Imultiload -> fprintf ppf "multiload %a" regs arg
+  | Imultiload n -> fprintf ppf "multiload %d %a" n regs arg
 
 let rec instr ppf i =
   if !print_live then begin
