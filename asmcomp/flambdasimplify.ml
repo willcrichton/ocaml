@@ -470,7 +470,8 @@ let make_stub unused var (fun_decl : _ Flambda.function_declaration) =
       { ap_function = Fvar(renamed, nid ());
         ap_arg;
         ap_kind;
-        ap_dbg },
+        ap_dbg;
+        ap_return_arity = 1 },
       nid ())
   in
   let free_variables =
@@ -484,7 +485,7 @@ let make_stub unused var (fun_decl : _ Flambda.function_declaration) =
     body;
     free_variables;
     stub = true;
-    return = Flambda.Normal_return;
+    return_arity = 1;
     dbg = fun_decl.dbg;
   }
   in
@@ -606,7 +607,9 @@ let unbox_returns tree =
              let ((can_unbox, num_returns), unboxed_body) =
                Flambdaiter.fold_return_sites unbox_return (true, 0) body
              in
-             let new_fn = if can_unbox then {fn with body = unboxed_body} else fn
+             let new_fn = if can_unbox then {fn with body = unboxed_body;
+                                                     return_arity = num_returns}
+               else fn
              in (new_fn, can_unbox, num_returns))
           cl_fun.funs
       in
@@ -664,6 +667,7 @@ let unbox_returns tree =
             ap_arg = List.map (fun v -> Fvar(v, Expr_id.create())) params;
             ap_kind = Direct(Closure_id.wrap new_id);
             ap_dbg = Debuginfo.none;
+            ap_return_arity = num_returns;
           }, Expr_id.create()),
           bindings,
           Expr_id.create())
@@ -677,7 +681,7 @@ let unbox_returns tree =
           toplevel,
           Expr_id.create())
       in
-      let new_fun = {body; params; free_variables; return = Flambda.Normal_return;
+      let new_fun = {body; params; free_variables; return_arity = 1;
                      stub = true; dbg = Debuginfo.none} in
       let new_funs = Variable.Map.singleton fn_id new_fun in
       Fclosure({

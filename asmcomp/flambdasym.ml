@@ -522,11 +522,10 @@ module Conv(P:Param1) = struct
     (*             ap_dbg = dbg}, ()), *)
     (*     approx *)
 
-    | Fapply({ap_function = funct; ap_arg = args; ap_kind = direct; ap_dbg = dbg}, _) ->
+    | Fapply({ap_function = funct; ap_arg = args; ap_kind; ap_dbg; ap_return_arity}, _) ->
         let ufunct, fun_approx = conv_approx env funct in
-        let direct = match direct with
-          | Direct_multi _
-          | Direct _ -> direct
+        let ap_kind = match ap_kind with
+          | Direct _ -> ap_kind
           | Indirect -> match get_descr fun_approx with
             (* We mark some calls as direct when it is unknown:
                for instance if simplify wasn't run before. *)
@@ -541,8 +540,7 @@ module Conv(P:Param1) = struct
           | _ -> Value_unknown
         in
         Fapply({ap_function = ufunct; ap_arg = conv_list env args;
-                ap_kind = direct;
-                ap_dbg = dbg}, ()),
+                ap_kind; ap_dbg; ap_return_arity;}, ()),
         approx
 
     | Fswitch(arg, sw, _) ->

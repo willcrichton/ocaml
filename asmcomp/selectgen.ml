@@ -33,7 +33,7 @@ let oper_result_type = function
       end
   | Calloc -> typ_addr
   | Cstore c -> typ_void
-  | Cmultistore -> typ_addr (* TODO(wcrichton), kind of a hack *)
+  | Cmultistore -> typ_addr (* TODO(wcrichton): turn fn into a machtype array *)
   | Cmultiload -> typ_addr
   | Caddi | Csubi | Cmuli | Cmulhi | Cdivi | Cmodi |
     Cand | Cor | Cxor | Clsl | Clsr | Casr |
@@ -250,7 +250,7 @@ method mark_instr = function
 method select_operation op args =
   match (op, args) with
     (Capply(ty, dbg), Cconst_symbol s :: rem) -> (Icall_imm s, rem)
-  | (Capply(ty, dbg), _) -> (Icall_ind, args)
+  | (Capply(ty, dbg), _) -> (Icall_ind, args) (* fail if return arity > 1 *)
   | (Cextcall(s, ty, alloc, dbg), _) -> (Iextcall(s, alloc), args)
   | (Cload chunk, [arg]) ->
       let (addr, eloc) = self#select_addressing chunk arg in
@@ -514,7 +514,8 @@ method emit_expr env exp =
             Icall_ind ->
               let r1 = self#emit_tuple env new_args in
               let rarg = Array.sub r1 1 (Array.length r1 - 1) in
-              let rd = self#regs_for ty in
+              let rd = self#regs_for ty in (* TODO(wcrichton): add #regs_for_multi *)
+               (* also fail if len(ty) > 1 *)
               let (loc_arg, stack_ofs) = Proc.loc_arguments rarg in
               let loc_res = Proc.loc_results rd in
               self#insert_move_args rarg loc_arg stack_ofs;
@@ -522,9 +523,9 @@ method emit_expr env exp =
                           (Array.append [|r1.(0)|] loc_arg) loc_res;
               self#insert_move_results loc_res rd stack_ofs;
               Some rd
-          | Icall_imm lbl ->
+          | Icall_imm lbl -> (* Icall_imm should have arity as a parameter *)
               let r1 = self#emit_tuple env new_args in
-              let rd = self#regs_for ty in
+              let rd = self#regs_for ty in (* TODO(wcrichton): become #regs_for_multi *)
               let (loc_arg, stack_ofs) = Proc.loc_arguments r1 in
               let loc_res = Proc.loc_results rd in
               self#insert_move_args r1 loc_arg stack_ofs;
@@ -545,6 +546,9 @@ method emit_expr env exp =
               self#insert (Iop(Ialloc size)) [||] rd;
               self#emit_stores env new_args rd;
               Some rd
+          | Imultistore -> ?? (* basically same as below except with regs_for_multi *)
+          | Imultiload  -> ?? (* emit tuple, regs_for (dest register), self#insert_move
+                                 r1.(?) -> rd *)
           | op ->
               let r1 = self#emit_tuple env new_args in
               let rd = self#regs_for ty in
@@ -720,11 +724,12 @@ method emit_stores env data regs_addr =
 
 (* Same, but in tail position *)
 
+(* TODO(wcrichton): look at this *)
 method private emit_return env exp =
   match self#emit_expr env exp with
     None -> ()
-  | Some r ->
-      let loc = Proc.loc_results r in
+  | Some r ->                         (* modify *)
+      let loc = Proc.loc_results r in (* this is where to put the results *)
       self#insert_moves r loc;
       self#insert Ireturn loc [||]
 
@@ -864,7 +869,6 @@ method emit_fundecl f =
     fun_args = loc_arg;
     fun_body = body;
     fun_fast = f.Cmm.fun_fast;
-    fun_return = f.Cmm.fun_return;
     fun_dbg  = f.Cmm.fun_dbg }
 
 end

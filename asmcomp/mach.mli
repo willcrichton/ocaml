@@ -82,7 +82,6 @@ type fundecl =
     fun_args  : Reg.t array;
     fun_body  : instruction;
     fun_fast  : bool;
-    fun_return: Flambda.return_kind;
     fun_dbg   : Debuginfo.t }
 
 val dummy_instr: instruction

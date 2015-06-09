@@ -29,7 +29,7 @@ let machtype ppf mty =
          done
 
 let machtype_list ppf mty_list =
-  Array.iter (machtype ppf) mty_list
+  Array.iter (fprintf ppf "%a " machtype) mty_list
 
 let comparison = function
   | Ceq -> "=="

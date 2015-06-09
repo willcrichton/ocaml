@@ -110,7 +110,6 @@ type fundecl =
     fun_args: (Ident.t * machtype) list;
     fun_body: expression;
     fun_fast: bool;
-    fun_return: Flambda.return_kind;
     fun_dbg : Debuginfo.t; }
 
 type data_item =

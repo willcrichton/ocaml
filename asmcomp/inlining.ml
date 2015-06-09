@@ -819,7 +819,8 @@ and transform_application_expression env r (funct, fapprox)
       (args, approxs) dbg eid =
   let no_transformation () : _ Flambda.t * R.t =
     Fapply ({ap_function = funct; ap_arg = args;
-               ap_kind = Indirect; ap_dbg = dbg}, eid),
+             ap_kind = Indirect; ap_dbg = dbg;
+             ap_return_arity = 1}, eid),
       ret r A.value_unknown
   in
   match fapprox.descr with
@@ -845,7 +846,8 @@ and transform_application_expression env r (funct, fapprox)
             (h_args,h_approxs) dbg (Expr_id.create ())
         in
         loop env r (Fapply({ ap_function = expr; ap_arg = q_args;
-                             ap_kind = Indirect; ap_dbg = dbg}, eid))
+                             ap_kind = Indirect; ap_dbg = dbg;
+                             ap_return_arity = 1; }, eid))
       else if nargs > 0 && nargs < arity then
         let partial_fun = partial_apply funct fun_id func args dbg in
         loop env r partial_fun
@@ -877,6 +879,7 @@ and partial_apply funct fun_id func args ap_dbg : _ Flambda.t =
       ap_arg = call_args;
       ap_kind = Direct fun_id;
       ap_dbg;
+      ap_return_arity = 1;
     }, Expr_id.create ())
   in
   let closures = make_closure_declaration new_fun_id expr remaining_args in
@@ -1022,6 +1025,7 @@ and inline_by_copying_function_declaration ~env ~r ~funct ~clos ~fun_id ~func
           List.map (fun id -> Flambda.Fvar (id, Expr_id.create ())) args;
         ap_kind = Direct fun_id;
         ap_dbg;
+        ap_return_arity = 1;
       }, Expr_id.create ())
   in
   (* Now we bind the variables that will hold the arguments from the original

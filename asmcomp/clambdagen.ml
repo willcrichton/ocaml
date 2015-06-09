@@ -325,9 +325,9 @@ module Conv(P:Param2) = struct
         let pos = var_offset - fun_offset in
         Uprim(Pfield pos, [ulam], Debuginfo.none)
 
-    | Fapply({ ap_function = funct; ap_arg = args;
+    | Fapply({ ap_function = funct; ap_arg = args; ap_return_arity = return_arity;
                ap_kind = Direct direct_func; ap_dbg = dbg }, _) ->
-        conv_direct_apply (conv env funct) args direct_func dbg env
+        conv_direct_apply (conv env funct) args direct_func return_arity dbg env
 
     | Fapply({ ap_function = funct; ap_arg = args;
                ap_kind = Indirect; ap_dbg = dbg }, _) ->
@@ -336,11 +336,6 @@ module Conv(P:Param2) = struct
            function for generic calls. Notice that for direct calls it is
            added here. *)
         Ugeneric_apply(conv env funct, conv_list env args, dbg)
-
-    | Fapply({ ap_function = funct; ap_arg = args;
-               ap_kind = Direct_multi direct_func; ap_dbg = dbg }, _) ->
-        let label = Compilenv.function_label direct_func in
-        Umulti_apply(label, conv_list env args, dbg)
 
     | Fswitch(arg, sw, d) ->
         let aux () =
@@ -480,14 +475,14 @@ module Conv(P:Param2) = struct
     | [| |] -> [| |], [| |] (* May happen when default is None *)
     | _     -> index, actions
 
-  and conv_direct_apply ufunct args direct_func dbg env =
+  and conv_direct_apply ufunct args direct_func return_arity dbg env =
     let closed = is_function_constant direct_func in
     let label = Compilenv.function_label direct_func in
     let uargs =
       let uargs = conv_list env args in
       if closed then uargs else uargs @ [ufunct] in
 
-    let apply = Udirect_apply(label, uargs, dbg) in
+    let apply = Udirect_apply(label, uargs, return_arity, dbg) in
 
     (* This is usualy sufficient to detect closure with side effects *)
     let rec no_effect = function
@@ -615,7 +610,6 @@ module Conv(P:Param2) = struct
         arity = Flambdautils.function_arity func;
         params = if closed then params else params @ [env_var];
         body = conv env_body func.body;
-        return = func.return;
         dbg = func.dbg } in
 
     let ufunct = List.map conv_function funct in

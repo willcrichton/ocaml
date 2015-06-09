@@ -186,10 +186,10 @@ let map_general ~toplevel f tree =
       | Fsymbol _ -> tree
       | Fvar (id,annot) -> tree
       | Fconst (cst,annot) -> tree
-      | Fapply ({ ap_function; ap_arg; ap_kind; ap_dbg }, annot) ->
-          Fapply ({ ap_function = aux ap_function;
-                    ap_arg = List.map aux ap_arg;
-                    ap_kind; ap_dbg }, annot)
+      | Fapply ({ ap_function; ap_arg } as ap, annot) ->
+          Fapply ({ ap with ap_function = aux ap_function;
+                            ap_arg = List.map aux ap_arg; },
+                  annot)
       | Fset_of_closures ({ cl_fun; cl_free_var;
                     cl_specialised_arg },annot) ->
           let cl_fun =
@@ -385,14 +385,14 @@ let fold_subexpressions f acc = function
             acc, Some def in
       acc, Fstringswitch (arg, sw, def, d)
 
-  | Fapply ({ ap_function; ap_arg; ap_kind; ap_dbg }, d) ->
+  | Fapply ({ ap_function; ap_arg } as ap, d) ->
       let acc, ap_function = f acc Variable.Set.empty ap_function in
       let acc, ap_arg =
         List.fold_right
           (fun arg (acc, l) ->
              let acc, arg = f acc Variable.Set.empty arg in
              acc, arg :: l) ap_arg (acc,[]) in
-      acc, Fapply ({ ap_function; ap_arg; ap_kind; ap_dbg }, d)
+      acc, Fapply ({ ap with ap_function; ap_arg }, d)
 
   | Fsend (kind, e1, e2, args, dbg, d) ->
       let acc, args =
@@ -538,10 +538,10 @@ let map_data (type t1) (type t2) (f:t1 -> t2) (tree:t1 flambda) : t2 flambda =
     | Fletrec(defs, body, v) ->
         let defs = List.map (fun (id,def) -> (id, mapper def)) defs in
         Fletrec( defs, mapper body, f v)
-    | Fapply ({ ap_function; ap_arg; ap_kind; ap_dbg }, v) ->
-        Fapply ({ ap_function = mapper ap_function;
-                  ap_arg = list_mapper ap_arg;
-                  ap_kind; ap_dbg }, f v)
+    | Fapply ({ ap_function; ap_arg; } as ap, v) ->
+        Fapply ({ ap with ap_function = mapper ap_function;
+                          ap_arg = list_mapper ap_arg; },
+                f v)
     | Fset_of_closures ({ cl_fun; cl_free_var;
                   cl_specialised_arg }, v) ->
         let cl_fun =

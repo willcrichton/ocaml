@@ -143,7 +143,8 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
   let args, approxs = args_with_approxs in
   let no_transformation () : _ Flambda.t * R.t =
     Fapply ({ap_function = funct; ap_arg = args;
-             ap_kind = Direct fun_id; ap_dbg}, eid),
+             ap_kind = Direct fun_id; ap_dbg;
+             ap_return_arity = func.return_arity}, eid),
     R.set_approx r A.value_unknown
   in
   let max_level = 3 in
