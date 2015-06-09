@@ -13,7 +13,7 @@
 (* Selection of pseudo-instructions, assignment of pseudo-registers,
    sequentialization. *)
 
-type environment = (Ident.t, Reg.t array) Tbl.t
+type environment = (Ident.t, Reg.t array array) Tbl.t
 
 val size_expr : environment -> Cmm.expression -> int
 
@@ -99,9 +99,8 @@ class virtual selector_generic : object
   method insert_moves : Reg.t array -> Reg.t array -> unit
   method adjust_type : Reg.t -> Reg.t -> unit
   method adjust_types : Reg.t array -> Reg.t array -> unit
-  method emit_expr :
-    (Ident.t, Reg.t array) Tbl.t -> Cmm.expression -> Reg.t array option
-  method emit_tail : (Ident.t, Reg.t array) Tbl.t -> Cmm.expression -> unit
+  method emit_expr : environment -> Cmm.expression -> Reg.t array option
+  method emit_tail : environment -> Cmm.expression -> unit
 end
 
 val reset : unit -> unit
