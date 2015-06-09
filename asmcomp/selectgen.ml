@@ -18,7 +18,7 @@ open Cmm
 open Reg
 open Mach
 
-type environment = (Ident.t, Reg.t array) Tbl.t
+type environment = (Ident.t, Reg.t array array) Tbl.t
 
 (* Infer the type of the result of an operation *)
 
@@ -57,7 +57,7 @@ let size_expr env exp =
           Tbl.find id localenv
         with Not_found ->
         try
-          let regs = Tbl.find id env in
+          let regs = (Tbl.find id env).(0) in
           size_machtype (Array.map (fun r -> r.typ) regs)
         with Not_found ->
           fatal_error("Selection.size_expr: unbound var " ^
@@ -460,7 +460,7 @@ method emit_expr env exp =
       Some(self#insert_op (Iconst_int n) [||] r)
   | Cvar v ->
       begin try
-        Some(Tbl.find v env)
+        Some((Tbl.find v env).(0))
       with Not_found ->
         fatal_error("Selection.emit_expr: unbound var " ^ Ident.unique_name v)
       end
@@ -472,7 +472,7 @@ method emit_expr env exp =
   | Cassign(v, e1) ->
       let rv =
         try
-          Tbl.find v env
+          (Tbl.find v env).(0)
         with Not_found ->
           fatal_error ("Selection.emit_expr: unbound var " ^ Ident.name v) in
       begin match self#emit_expr env e1 with
@@ -588,7 +588,7 @@ method emit_expr env exp =
       catch_regs := List.tl !catch_regs ;
       let new_env =
         List.fold_left
-        (fun env (id,r) -> Tbl.add id r env)
+        (fun env (id,r) -> Tbl.add id [|r|] env)
         env (List.combine ids rs) in
       let (r2, s2) = self#emit_sequence new_env e2 in
       let r = join r1 s1 r2 s2 in
@@ -611,7 +611,7 @@ method emit_expr env exp =
   | Ctrywith(e1, v, e2) ->
       let (r1, s1) = self#emit_sequence env e1 in
       let rv = self#regs_for typ_addr in
-      let (r2, s2) = self#emit_sequence (Tbl.add v rv env) e2 in
+      let (r2, s2) = self#emit_sequence (Tbl.add v [|rv|] env) e2 in
       let r = join r1 s1 r2 s2 in
       self#insert
         (Itrywith(s1#extract,
@@ -628,12 +628,12 @@ method private emit_sequence env exp =
 method private bind_let env v r1 =
   if all_regs_anonymous r1 then begin
     name_regs v r1;
-    Tbl.add v r1 env
+    Tbl.add v [|r1|] env
   end else begin
     let rv = Reg.createv_like r1 in
     name_regs v rv;
     self#insert_moves r1 rv;
-    Tbl.add v rv env
+    Tbl.add v [|rv|] env
   end
 
 method private emit_parts env exp =
@@ -650,12 +650,12 @@ method private emit_parts env exp =
           let id = Ident.create "bind" in
           if all_regs_anonymous r then
             (* r is an anonymous, unshared register; use it directly *)
-            Some (Cvar id, Tbl.add id r env)
+            Some (Cvar id, Tbl.add id [|r|] env)
           else begin
             (* Introduce a fresh temp to hold the result *)
             let tmp = Reg.createv_like r in
             self#insert_moves r tmp;
-            Some (Cvar id, Tbl.add id tmp env)
+            Some (Cvar id, Tbl.add id [|tmp|] env)
           end
         end
   end
@@ -808,14 +808,14 @@ method emit_tail env exp =
       catch_regs := List.tl !catch_regs ;
       let new_env =
         List.fold_left
-        (fun env (id,r) -> Tbl.add id r env)
+        (fun env (id,r) -> Tbl.add id [|r|] env)
         env (List.combine ids rs) in
       let s2 = self#emit_tail_sequence new_env e2 in
       self#insert (Icatch(nfail, s1, s2)) [||] [||]
   | Ctrywith(e1, v, e2) ->
       let (opt_r1, s1) = self#emit_sequence env e1 in
       let rv = self#regs_for typ_addr in
-      let s2 = self#emit_tail_sequence (Tbl.add v rv env) e2 in
+      let s2 = self#emit_tail_sequence (Tbl.add v [|rv|] env) e2 in
       self#insert
         (Itrywith(s1#extract,
                   instr_cons (Iop Imove) [|Proc.loc_exn_bucket|] rv s2))
@@ -848,7 +848,7 @@ method emit_fundecl f =
   let loc_arg = Proc.loc_parameters rarg in
   let env =
     List.fold_right2
-      (fun (id, ty) r env -> Tbl.add id r env)
+      (fun (id, ty) r env -> Tbl.add id [|r|] env)
       f.Cmm.fun_args rargs Tbl.empty in
   self#insert_moves loc_arg rarg;
   self#emit_tail env f.Cmm.fun_body;
