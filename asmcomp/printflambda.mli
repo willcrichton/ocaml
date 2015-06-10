@@ -10,6 +10,7 @@
 (*                                                                     *)
 (***********************************************************************)
 
+val lam : Format.formatter -> 'a Flambda.flambda -> unit
 val flambda : Format.formatter -> 'a Flambda.flambda -> unit
 
 val function_declarations :
