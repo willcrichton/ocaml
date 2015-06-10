@@ -22,7 +22,7 @@ type environment = (Ident.t, Reg.t array array) Tbl.t
 
 (* Infer the type of the result of an operation *)
 
-let oper_result_type = function
+let oper_result_type n = function
     Capply(ty, _) -> ty (* TODO(wcrichton) *)
   | Cextcall(s, ty, alloc, _) -> [|ty|]
   | Cload c ->
@@ -33,7 +33,7 @@ let oper_result_type = function
       end
   | Calloc -> [|typ_addr|]
   | Cstore c -> [|typ_void|]
-  | Cmultistore -> [|typ_addr; typ_addr|] (* TODO(wcrichton): turn fn into a machtype array *)
+  | Cmultistore -> Array.init n (fun _ -> typ_addr)
   | Cmultiload _ -> [|typ_addr|] (* TODO(wcrichton): not necessarily typ_addr *)
   | Caddi | Csubi | Cmuli | Cmulhi | Cdivi | Cmodi |
     Cand | Cor | Cxor | Clsl | Clsr | Casr |
@@ -68,7 +68,8 @@ let size_expr env exp =
     | Ctuple el ->
         List.fold_right (fun e sz -> size localenv e + sz) el 0
     | Cop(op, args) ->
-        size_machtype((oper_result_type op).(0)) (* TODO(wcrichton): what here? *)
+        size_machtype((oper_result_type (List.length args) op).(0))
+        (* TODO(wcrichton): what here? *)
     | Clet(id, arg, body) ->
         size (Tbl.add id (size localenv arg) localenv) body
     | Csequence(e1, e2) ->
@@ -508,7 +509,7 @@ method emit_expr env exp =
       begin match self#emit_parts_list env args with
         None -> None
       | Some(simple_args, env) ->
-          let ty = oper_result_type op in
+          let ty = oper_result_type (List.length simple_args) op in
           let (new_op, new_args) = self#select_operation op simple_args in
           let dbg = debuginfo_op op in
           match new_op with

@@ -582,12 +582,13 @@ let remove_unused_globals tree =
       | e -> e)
     tree
 
-let plam = Printflambda.flambda Format.std_formatter
+let plam flam = if !Clflags.dump_flambda then
+    Printflambda.flambda Format.std_formatter flam else ()
 
 let unbox_returns tree =
   let open Flambda in
   Flambdaiter.map (function
-    | Fclosure({ fu_closure = Fset_of_closures({cl_fun; cl_free_var} as set, dset) }
+    | Fclosure({ fu_closure = Fset_of_closures({cl_fun; cl_free_var}, dset) }
                as closure, d) as flam ->
       if (*not (!Clflags.dump_flambda) ||*)
          Variable.Map.cardinal cl_fun.funs <> 1
@@ -601,20 +602,23 @@ let unbox_returns tree =
                match flam with
                (* TODO(wcrichton): other return sites that matter? *)
                | Fprim(Pmakeblock(tag, Immutable), arg, dbg, attr) ->
-                 ((can_unbox, List.length arg),
-                  Fprim(Pmakeblock_noheap(tag), arg, dbg, attr))
+                 (* 9 is an arbitrary maximum number of registers, see Proc.loc_results *)
+                 (* For now, only deal with tag 0 *)
+                 if List.length arg > 9 || tag <> 0 then
+                   ((false, num_returns), flam)
+                 else
+                   ((can_unbox, List.length arg),
+                    Fprim(Pmakeblock_noheap(tag), arg, dbg, attr))
                | Fstaticraise _ -> ((can_unbox, num_returns), flam)
-               | _ -> ((false, num_returns), flam)
-             in
+               | _ -> ((false, num_returns), flam) in
              let ((can_unbox, num_returns), unboxed_body) =
-               Flambdaiter.fold_return_sites unbox_return (true, 0) body
-             in
-             let new_fn = if can_unbox then {fn with body = unboxed_body;
-                                                     return_arity = num_returns}
-               else fn
-             in (new_fn, can_unbox, num_returns))
-          cl_fun.funs
-      in
+               Flambdaiter.fold_return_sites unbox_return (true, 0) body in
+             let new_fn =
+               if can_unbox then {fn with body = unboxed_body;
+                                          return_arity = num_returns}
+               else fn in
+             (new_fn, can_unbox, num_returns))
+          cl_fun.funs in
       let mkvar = Variable.create ~current_compilation_unit:cl_fun.compilation_unit in
       let mkvar_suffix s v = mkvar ((Variable.unique_name v) ^ s) in
       let (fn_id, (fn, was_unboxed, num_returns)) = Variable.Map.choose funs in
@@ -623,32 +627,28 @@ let unbox_returns tree =
        let new_free_closure_var =
         List.map
           (fun (key, value) -> (key, value, mkvar "tmp"))
-          (Variable.Map.bindings cl_free_var)
-      in
+          (Variable.Map.bindings cl_free_var) in
       let inner_free_closure_var =
         List.fold_left
           (fun map (key, _, value) ->
              Variable.Map.add key (Fvar(value, Expr_id.create())) map)
           Variable.Map.empty
-          new_free_closure_var
-      in
-       let let_id = mkvar_suffix "_multireturn" fn_id in
+          new_free_closure_var in
+      let let_id = mkvar_suffix "_multireturn" fn_id in
       let new_id = mkvar_suffix "_unboxed" fn_id in
       let funs = Variable.Map.singleton new_id fn in
       let unboxed_return_id = mkvar_suffix "_unboxed_return" fn_id in
       let result_vars =
         let rec builder = function
           | 0 -> []
-          | n -> ("_result" ^ (string_of_int (n - 1))) :: (builder (n - 1))
-        in List.map (fun s -> mkvar_suffix s fn_id) (List.rev (builder num_returns))
-      in
+          | n -> ("_result" ^ (string_of_int (n - 1))) :: (builder (n - 1)) in
+        List.map (fun s -> mkvar_suffix s fn_id) (List.rev (builder num_returns)) in
       let result =
         Fprim(
           Pmakeblock(0, Immutable),
           List.map (fun v -> Fvar(v, Expr_id.create())) result_vars,
           Debuginfo.none,
-          Expr_id.create())
-      in
+          Expr_id.create()) in
       let bindings =
         List.fold_left
           (fun acc (index, result_var) ->
@@ -662,8 +662,7 @@ let unbox_returns tree =
                acc,
                Expr_id.create()))
           result
-          (List.mapi (fun i x -> (i, x)) result_vars)
-      in
+          (List.mapi (fun i x -> (i, x)) result_vars) in
       let toplevel =
         Flet(
           Not_assigned,
@@ -676,57 +675,41 @@ let unbox_returns tree =
             ap_return_arity = num_returns;
           }, Expr_id.create()),
           bindings,
-          Expr_id.create())
-      in
+          Expr_id.create()) in
       let body =
         Flet(
           Not_assigned,
           let_id,
           Fclosure({
             closure with fu_closure = Fset_of_closures({
-              set with cl_fun = {cl_fun with funs};
-                       cl_free_var = inner_free_closure_var
+              cl_fun = {cl_fun with funs};
+              cl_free_var = inner_free_closure_var;
+              cl_specialised_arg = Variable.Map.empty; (* TODO: what to put here? *)
             }, dset);
             fu_fun = Closure_id.wrap new_id}, d),
           toplevel,
-          Expr_id.create())
-      in
+          Expr_id.create()) in
       let outer_free_closure_var =
         List.fold_left
           (fun map (_, value, key) -> Variable.Map.add key value map)
           Variable.Map.empty
-          new_free_closure_var
-      in
-        let outer_free_fn_variables =
+          new_free_closure_var in
+      let outer_free_fn_variables =
         List.fold_right
           Variable.Set.add
           (List.map (fun (_, _, v) -> v) new_free_closure_var)
-          fn.free_variables
-      in
+          fn.free_variables in
       let outer_free_fn_variables =
         List.fold_right
           Variable.Set.remove
           (List.map (fun (k, _, _) -> k) new_free_closure_var)
-          outer_free_fn_variables
-      in
-
-          let outer_free_fn_variables =
-        List.fold_right Variable.Set.remove fn.params outer_free_fn_variables
-      in
+          outer_free_fn_variables in
       let outer_free_fn_variables =
-        List.fold_right Variable.Set.add params outer_free_fn_variables
-      in
-
-
-      (*let outer_free_fn_variables =
-        List.fold_right
-          Variable.Set.remove
-          (List.map (fun (k, _, _) -> k) new_free_closure_var)
-          free_variables
-      in*)
+        List.fold_right Variable.Set.remove fn.params outer_free_fn_variables in
+      let outer_free_fn_variables =
+        List.fold_right Variable.Set.add params outer_free_fn_variables in
       let new_fun = {body; params; free_variables = outer_free_fn_variables;
-                     return_arity = 1; stub = true; dbg = Debuginfo.none}
-      in
+                     return_arity = 1; stub = true; dbg = Debuginfo.none} in
       let new_funs = Variable.Map.singleton fn_id new_fun in
       Fclosure({
         fu_closure = Fset_of_closures({
@@ -736,7 +719,7 @@ let unbox_returns tree =
             compilation_unit = cl_fun.compilation_unit;
           };
           cl_free_var = outer_free_closure_var;
-          cl_specialised_arg = set.cl_specialised_arg;
+          cl_specialised_arg = Variable.Map.empty; (* TODO: what to put here? *)
         }, Expr_id.create());
         fu_fun = Closure_id.wrap fn_id;
         fu_relative_to = None;

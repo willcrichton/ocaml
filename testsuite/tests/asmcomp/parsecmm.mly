@@ -180,7 +180,7 @@ expr:
   | LPAREN LET letdef sequence RPAREN { make_letdef $3 $4 }
   | LPAREN ASSIGN IDENT expr RPAREN { Cassign(find_ident $3, $4) }
   | LPAREN APPLY expr exprlist machtype RPAREN
-                { Cop(Capply($5, Debuginfo.none), $3 :: List.rev $4) }
+                { Cop(Capply([|$5|], Debuginfo.none), $3 :: List.rev $4) }
   | LPAREN EXTCALL STRING exprlist machtype RPAREN
                 { Cop(Cextcall($3, $5, false, Debuginfo.none), List.rev $4) }
   | LPAREN SUBF expr RPAREN { Cop(Cnegf, [$3]) }

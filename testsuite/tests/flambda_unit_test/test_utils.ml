@@ -101,6 +101,7 @@ let fun_decl params fv body =
     params;
     free_variables = Variable.Set.of_list (params @ fv);
     body;
+    return_arity = 1;
     dbg = Debuginfo.none }
 
 let fun_decls lst fv =
@@ -148,6 +149,7 @@ let afun_fclos' ?(fv=[]) args body =
 let fun_decl' params body =
   { stub = false; params; body;
     free_variables = Flambdaiter.free_variables body;
+    return_arity = 1;
     dbg = Debuginfo.none }
 
 let fun_decls' lst =
@@ -165,6 +167,7 @@ let fapply ?(kind=Indirect) f args =
       ap_function = f;
       ap_arg = args;
       ap_dbg = Debuginfo.none;
+      ap_return_arity = 1;
       ap_kind = kind},nid ())
 
 let aapply ?kind f args =

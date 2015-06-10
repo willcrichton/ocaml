@@ -500,20 +500,29 @@ let free_variables tree =
   Variable.Set.diff !free !bound
 
 let rec fold_return_sites f acc tree =
+  let aux (acc, list) (i, flam) =
+    let (acc, flam') = fold_return_sites f acc flam in
+    (acc, (i, flam') :: list)
+  in
   match tree with
   | Fsymbol _
   | Fvar _
   | Fprim _
   | Fstaticraise _
+  | Fapply _
+  | Fset_of_closures _
+  | Fclosure _
+  | Fvar_within_closure _
+  | Fwhile _
+  | Ffor _
+  | Fassign _
+  | Fsend _
+  | Funreachable _
   | Fconst _ -> f(acc, tree)
 
   | Flet(kind, id, def, body, d) ->
     let (acc, body') = fold_return_sites f acc body in
     (acc, Flet(kind, id, def, body', d))
-
-  | Fapply({ap_function = body} as fn, d) ->
-    let (acc, body') = fold_return_sites f acc body in
-    (acc, Fapply({fn with ap_function = body'}, d))
 
   | Fletrec(defs, body, d) ->
     let (acc, body') = fold_return_sites f acc body in
@@ -524,9 +533,43 @@ let rec fold_return_sites f acc tree =
     let (acc, body_else') = fold_return_sites f acc body_else in
     (acc, Fifthenelse(cond, body_then', body_else', d))
 
-  (* TODO(wcrichton): finish this *)
-  | _ -> (acc, tree)
+  | Fswitch(arg, sw, d) ->
+    let (acc, fs_consts') = List.fold_left aux (acc, []) sw.fs_consts in
+    let (acc, fs_blocks') = List.fold_left aux (acc, []) sw.fs_blocks in
+    let (acc, fs_failaction') = match sw.fs_failaction with
+      | Some(flam) ->
+        let (acc, flam') = fold_return_sites f acc flam in
+        (acc, Some(flam'))
+      | None -> (acc, None)
+    in
+    (acc, Fswitch(arg, {sw with fs_consts = fs_consts';
+                                fs_blocks = fs_blocks';
+                                fs_failaction = fs_failaction'},
+                  d))
 
+  | Fstringswitch(arg, sw, def, v) ->
+    let (acc, sw') = List.fold_left aux (acc, []) sw in
+    let (acc, def') = match def with
+      | Some(flam) ->
+        let (acc, flam') = fold_return_sites f acc flam in
+        (acc, Some(flam'))
+      | None -> (acc, None)
+    in
+    (acc, Fstringswitch(arg, sw', def', v))
+
+  | Ftrywith(body, id, handler, d) ->
+    let (acc, body') = fold_return_sites f acc body in
+    let (acc, handler') = fold_return_sites f acc handler in
+    (acc, Ftrywith(body', id, handler', d))
+
+  | Fsequence(e1, e2, d) ->
+    let (acc, e2') = fold_return_sites f acc e2 in
+    (acc, Fsequence(e1, e2', d))
+
+  | Fstaticcatch(exn, ids, body, handler, d) ->
+    let (acc, body') = fold_return_sites f acc body in
+    let (acc, handler') = fold_return_sites f acc handler in
+    (acc, Fstaticcatch(exn, ids, body', handler', d))
 
 let map_data (type t1) (type t2) (f:t1 -> t2) (tree:t1 flambda) : t2 flambda =
   let rec mapper : t1 flambda -> t2 flambda = function

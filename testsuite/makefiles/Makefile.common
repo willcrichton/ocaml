@@ -45,7 +45,7 @@ include $(TOPDIR)/config/Makefile
 
 OCAMLRUN=$(TOPDIR)/boot/ocamlrun$(EXE)
 
-OCFLAGS=-nostdlib -I $(OTOPDIR)/stdlib $(COMPFLAGS)
+OCFLAGS=-nostdlib -I $(OTOPDIR)/stdlib $(COMPFLAGS) -dflambda
 OCOPTFLAGS=
 
 ifeq ($(SUPPORTS_SHARED_LIBRARIES),false)
