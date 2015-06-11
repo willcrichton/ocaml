@@ -309,7 +309,7 @@ end)
 let primitive (p : Lambda.primitive) (args, approxs) expr dbg : _ Flambda.t * A.t =
   let fpc = !Clflags.float_const_prop in
   match p with
-  | Pmakeblock(tag, Asttypes.Immutable) | Pmakeblock_noheap(tag) ->
+  | Pmakeblock(tag, Asttypes.Immutable) ->
     expr, A.value_block(tag, Array.of_list approxs)
   | Pignore -> begin
       let eid = Flambdautils.data_at_toplevel_node expr in
@@ -581,9 +581,6 @@ let remove_unused_globals tree =
           Fprim(Pignore, arg, dbg, attr)
       | e -> e)
     tree
-
-let plam flam = if !Clflags.dump_flambda then
-    Printflambda.flambda Format.std_formatter flam else ()
 
 let unbox_and_check ({body} as fn : 'a Flambda.function_declaration) =
   if fn.return_arity <> 1 then (fn, false, 0) else

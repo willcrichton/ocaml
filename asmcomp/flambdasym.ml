@@ -522,7 +522,7 @@ module Conv(P:Param1) = struct
     (*             ap_dbg = dbg}, ()), *)
     (*     approx *)
 
-    | Fapply({ap_function = funct; ap_arg = args; ap_kind; ap_dbg; ap_return_arity}, _) ->
+    | Fapply({ap_function = funct; ap_arg = args; ap_kind} as ap, _) ->
         let ufunct, fun_approx = conv_approx env funct in
         let ap_kind = match ap_kind with
           | Direct _ -> ap_kind
@@ -539,8 +539,7 @@ module Conv(P:Param1) = struct
               Closure_id.Map.find fun_id results
           | _ -> Value_unknown
         in
-        Fapply({ap_function = ufunct; ap_arg = conv_list env args;
-                ap_kind; ap_dbg; ap_return_arity;}, ()),
+        Fapply({ap with ap_function = ufunct; ap_arg = conv_list env args}, ()),
         approx
 
     | Fswitch(arg, sw, _) ->
@@ -592,8 +591,6 @@ module Conv(P:Param1) = struct
         else
           let sym = add_constant block ex in
           Fsymbol(sym, ()), Value_symbol sym
-
-    (* TODO(wcrichton): add something for makeblock_noheap here? *)
 
 (*  (* If global mutables are allowed: *)
     | Fprim(Lambda.Pmakeblock(tag, Asttypes.Mutable) as p, args, dbg, _)

@@ -77,11 +77,11 @@ and instruction_desc =
   | Iraise of Lambda.raise_kind
 
 type fundecl =
-  { fun_name  : string;
-    fun_args  : Reg.t array;
-    fun_body  : instruction;
-    fun_fast  : bool;
-    fun_dbg   : Debuginfo.t }
+  { fun_name: string;
+    fun_args: Reg.t array;
+    fun_body: instruction;
+    fun_fast: bool;
+    fun_dbg : Debuginfo.t }
 
 let rec dummy_instr =
   { desc = Iend;

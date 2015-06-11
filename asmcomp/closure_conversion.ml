@@ -252,6 +252,7 @@ let tupled_function_call_stub t id original_params tuplified_version
         ap_arg = List.map (fun p' -> Flambda.Fvar (p', nid ())) params;
         ap_kind = Direct (Closure_id.wrap tuplified_version);
         ap_dbg = Debuginfo.none;
+        ap_return_arity = 1;
       },
       nid ())
   in
@@ -269,6 +270,7 @@ let tupled_function_call_stub t id original_params tuplified_version
     free_variables = Variable.Set.of_list [tuple_param; tuplified_version];
     body;
     dbg = Debuginfo.none;
+    return_arity = 1;
   }
 
 (* Propagate an [Lev_after] debugging event into an adjacent Flambda node. *)
@@ -518,7 +520,7 @@ and close_functions t external_env function_declarations
     let closure_bound_var = Function_decl.closure_bound_var decl in
     let body = close t closure_env body in
     let fun_decl : _ Flambda.function_declaration =
-      { stub; params; dbg; free_variables; body; }
+      { stub; params; dbg; free_variables; body; return_arity = 1; }
     in
     match Function_decl.kind decl with
     | Curried -> Variable.Map.add closure_bound_var fun_decl map
@@ -609,6 +611,7 @@ and lift_apply_construction_to_variables t ~env ~funct ~args =
         ap_arg = apply_args;
         ap_kind = Indirect;
         ap_dbg = Debuginfo.none;
+        ap_return_arity = 1;
       },
       nid ~name:"apply" ())
   in

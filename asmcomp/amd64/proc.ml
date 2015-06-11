@@ -156,7 +156,7 @@ let calling_conventions first_int last_int first_float last_float make_stack
   let ofs = ref 0 in
   for i = 0 to Array.length arg - 1 do
     match arg.(i).typ with
-     Int | Addr as ty ->
+      Int | Addr as ty ->
         if !int <= last_int then begin
           loc.(i) <- phys_reg !int;
           incr int
@@ -216,7 +216,7 @@ let win64_loc_external_arguments arg =
   and ofs = ref 32 in
   for i = 0 to Array.length arg - 1 do
     match arg.(i).typ with
-       Int | Addr as ty ->
+      Int | Addr as ty ->
         if !reg < 4 then begin
           loc.(i) <- phys_reg win64_int_external_arguments.(!reg);
           incr reg
