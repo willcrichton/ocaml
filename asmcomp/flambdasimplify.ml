@@ -582,6 +582,9 @@ let remove_unused_globals tree =
       | e -> e)
     tree
 
+let plam flam =
+  if !Clflags.dump_flambda then Printflambda.flambda Format.std_formatter flam else ()
+
 let unbox_and_check ({body} as fn : 'a Flambda.function_declaration) =
   if fn.return_arity <> 1 then (fn, false, 0) else
   let unbox_return ((can_unbox, num_returns), flam) =
@@ -605,14 +608,15 @@ let unbox_and_check ({body} as fn : 'a Flambda.function_declaration) =
     else fn in
   (new_fn, can_unbox, num_returns)
 
-
 let unbox_returns tree =
   let open Flambda in
   Flambdaiter.map (function
     | Fclosure({fu_closure = Fset_of_closures({cl_fun; cl_free_var; cl_specialised_arg},
                                               dset)} as closure,
-               d) as flam ->
-      if (*not (!Clflags.dump_flambda) ||*) Variable.Map.cardinal cl_fun.funs <> 1 then
+               closure_expr_id) as flam ->
+      if not (!Clflags.dump_flambda) ||
+        Variable.Map.cardinal cl_fun.funs <> 1
+      then
       flam else
 
       (* Update return sites in the closure if eligible *)
@@ -678,66 +682,79 @@ let unbox_returns tree =
           (Variable.Map.bindings cl_free_var) in
       let inner_free_closure_var =
         List.fold_left
-          (fun map (key, _, value) ->
+          (fun map (value, _, key) ->
              Variable.Map.add key (Fvar(value, Expr_id.create())) map)
           Variable.Map.empty
           new_free_closure_var in
 
+      let inner_free_fn_var =
+        List.fold_right
+          Variable.Set.remove
+          (List.map (fun (k, _, _) -> k) new_free_closure_var)
+          fn.free_variables in
+      let inner_free_fn_var =
+        List.fold_right
+          Variable.Set.add
+          (List.map (fun (_ ,_, v) -> v) new_free_closure_var)
+          inner_free_fn_var in
+
       let final_fn =
+        let reverse_map =
+          List.fold_left
+            (fun map (key, _, value) -> Variable.Map.add key value map)
+            Variable.Map.empty
+            new_free_closure_var in
+        let body = Flambdaiter.map (function
+          | Fvar(id, d) as fv ->
+            begin try
+              let id' = Variable.Map.find id reverse_map in
+              Fvar(id', d)
+            with Not_found -> fv end
+          | e -> e)
+          fn.body in
+        {fn with body; free_variables = inner_free_fn_var} in
+
+      let fn_binding =
         Flet(
           Not_assigned,
           inner_closure_id,
           Fclosure({
             closure with fu_closure = Fset_of_closures({
-              cl_fun = {cl_fun with funs = Variable.Map.singleton inner_fn_id fn};
+              cl_fun = {cl_fun with funs = Variable.Map.singleton inner_fn_id final_fn};
               cl_free_var = inner_free_closure_var;
               cl_specialised_arg;
             }, dset);
-            fu_fun = Closure_id.wrap inner_fn_id}, d),
+            fu_fun = Closure_id.wrap inner_fn_id},
+          Expr_id.create()),
           apply_inner,
           Expr_id.create()) in
 
-      let outer_free_closure_var =
-        List.fold_left
-          (fun map (_, value, key) -> Variable.Map.add key value map)
-          Variable.Map.empty
-          new_free_closure_var in
       let outer_free_fn_variables =
-        List.fold_right
-          Variable.Set.add
-          (List.map (fun (_, _, v) -> v) new_free_closure_var)
-          fn.free_variables in
-      let outer_free_fn_variables =
-        List.fold_right
-          Variable.Set.remove
-          (List.map (fun (k, _, _) -> k) new_free_closure_var)
-          outer_free_fn_variables in
-      let outer_free_fn_variables =
-        List.fold_right Variable.Set.remove fn.params outer_free_fn_variables in
+        List.fold_right Variable.Set.remove fn.params fn.free_variables in
       let outer_free_fn_variables =
         List.fold_right Variable.Set.add wrapper_params outer_free_fn_variables in
 
       let new_fn = {
-        body = final_fn; params = wrapper_params;
+        body = fn_binding;
+        params = wrapper_params;
         free_variables = outer_free_fn_variables;
-        return_arity = 1; stub = true; dbg = Debuginfo.none} in
+        return_arity = 1;
+        stub = true; (* We want our wrapper to always get inlined *)
+        dbg = Debuginfo.none} in
 
-      let new_flam = Fclosure({
+      Fclosure({
         fu_closure = Fset_of_closures({
           cl_fun = {
             ident = Set_of_closures_id.create cl_fun.compilation_unit;
             funs = Variable.Map.singleton fn_id new_fn;
             compilation_unit = cl_fun.compilation_unit;
           };
-          cl_free_var = outer_free_closure_var;
+          cl_free_var;
           cl_specialised_arg;
         }, Expr_id.create());
         fu_fun = Closure_id.wrap fn_id;
         fu_relative_to = None;
-      }, Expr_id.create()) in
-
-      (*Flambdacheck.check ~current_compilation_unit:cl_fun.compilation_unit new_flam;*)
-      new_flam
+      }, closure_expr_id)
 
    | flam -> flam)
     tree

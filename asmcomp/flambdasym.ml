@@ -539,7 +539,7 @@ module Conv(P:Param1) = struct
               Closure_id.Map.find fun_id results
           | _ -> Value_unknown
         in
-        Fapply({ap with ap_function = ufunct; ap_arg = conv_list env args}, ()),
+        Fapply({ap with ap_function = ufunct; ap_arg = conv_list env args; ap_kind}, ()),
         approx
 
     | Fswitch(arg, sw, _) ->
