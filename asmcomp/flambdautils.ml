@@ -24,8 +24,8 @@ let find_declaration_variable cf ({ funs } : _ Flambda.function_declarations) =
   then raise Not_found
   else var
 
-let find_free_variable cv ({ cl_free_var } : _ Flambda.fset_of_closures) =
-  Variable.Map.find (Var_within_closure.unwrap cv) cl_free_var
+let find_free_variable cv ({ free_vars } : _ Flambda.set_of_closures) =
+  Variable.Map.find (Var_within_closure.unwrap cv) free_vars
 
 (* utility functions *)
 
@@ -48,7 +48,7 @@ let data_at_toplevel_node (expr : _ Flambda.t) =
   | Flet(_,_,_,_,data)
   | Fletrec(_,_,data)
   | Fset_of_closures(_,data)
-  | Fclosure(_,data)
+  | Fselect_closure(_,data)
   | Fvar_within_closure(_,data)
   | Fapply(_,data)
   | Fswitch(_,_,data)
@@ -67,30 +67,27 @@ let data_at_toplevel_node (expr : _ Flambda.t) =
 
 let description_of_toplevel_node (expr : _ Flambda.t) =
   match expr with
-  | Fsymbol (sym,_) ->
-      Format.asprintf "%%%a" Symbol.print sym
-  | Fvar (id,data) ->
-      Format.asprintf "var %a" Variable.print id
-  | Fconst (cst,data) -> "const"
-  | Flet(str, id, lam, body,data) ->
-      Format.asprintf "let %a" Variable.print id
-  | Fletrec(defs, body,data) -> "letrec"
-  | Fset_of_closures(_,data) -> "set_of_closures"
-  | Fclosure(_,data) -> "closure"
-  | Fvar_within_closure(_,data) -> "var_within_closure"
-  | Fapply(_,data) -> "apply"
-  | Fswitch(arg, sw,data) -> "switch"
-  | Fstringswitch(arg, cases, default, data) -> "stringswitch"
-  | Fsend(kind, met, obj, args, _,data) -> "send"
-  | Fprim(_, args, _,data) -> "prim"
-  | Fstaticraise (i, args,data) -> "staticraise"
-  | Fstaticcatch (i, vars, body, handler,data) -> "catch"
-  | Ftrywith(body, id, handler,data) -> "trywith"
-  | Fifthenelse(arg, ifso, ifnot,data) -> "if"
-  | Fsequence(lam1, lam2,data) -> "seq"
-  | Fwhile(cond, body,data) -> "while"
-  | Ffor(id, lo, hi, dir, body,data) -> "for"
-  | Fassign(id, lam,data) -> "assign"
+  | Fsymbol (sym, _) -> Format.asprintf "%%%a" Symbol.print sym
+  | Fvar (id, _) -> Format.asprintf "var %a" Variable.print id
+  | Fconst _ -> "const"
+  | Flet (_, id, _, _, _) -> Format.asprintf "let %a" Variable.print id
+  | Fletrec _ -> "letrec"
+  | Fset_of_closures _ -> "set_of_closures"
+  | Fselect_closure _ -> "closure"
+  | Fvar_within_closure _ -> "var_within_closure"
+  | Fapply _ -> "apply"
+  | Fswitch _ -> "switch"
+  | Fstringswitch _ -> "stringswitch"
+  | Fsend _ -> "send"
+  | Fprim _ -> "prim"
+  | Fstaticraise  _ -> "staticraise"
+  | Fstaticcatch  _ -> "catch"
+  | Ftrywith _ -> "trywith"
+  | Fifthenelse _ -> "if"
+  | Fsequence _ -> "seq"
+  | Fwhile _ -> "while"
+  | Ffor _ -> "for"
+  | Fassign _ -> "assign"
   | Funreachable _ -> "unreachable"
 
 let recursive_functions ({ funs } : _ Flambda.function_declarations) =
@@ -133,24 +130,24 @@ let rec same (l1 : 'a Flambda.t) (l2 : 'a Flambda.t) =
     end
   | Fconst _, _ | _, Fconst _ -> false
   | Fapply(a1, _), Fapply(a2, _) ->
-      a1.ap_kind = a2.ap_kind &&
-      same a1.ap_function a2.ap_function &&
-      samelist same a1.ap_arg a2.ap_arg
+      a1.kind = a2.kind &&
+      same a1.func a2.func &&
+      samelist same a1.args a2.args
   | Fapply _, _ | _, Fapply _ -> false
   | Fset_of_closures (c1, _), Fset_of_closures (c2, _) ->
-      Variable.Map.equal sameclosure c1.cl_fun.funs c2.cl_fun.funs &&
-      Variable.Map.equal same c1.cl_free_var c2.cl_free_var &&
-      Variable.Map.equal Variable.equal c1.cl_specialised_arg c2.cl_specialised_arg
+      Variable.Map.equal sameclosure c1.function_decls.funs c2.function_decls.funs &&
+      Variable.Map.equal same c1.free_vars c2.free_vars &&
+      Variable.Map.equal Variable.equal c1.specialised_args c2.specialised_args
   | Fset_of_closures _, _ | _, Fset_of_closures _ -> false
-  | Fclosure (f1, _), Fclosure (f2, _) ->
-      same f1.fu_closure f2.fu_closure &&
-      Closure_id.equal f1.fu_fun f1.fu_fun &&
-      sameoption Closure_id.equal f1.fu_relative_to f1.fu_relative_to
-  | Fclosure _, _ | _, Fclosure _ -> false
+  | Fselect_closure (f1, _), Fselect_closure (f2, _) ->
+      same f1.set_of_closures f2.set_of_closures &&
+      Closure_id.equal f1.closure_id f1.closure_id &&
+      sameoption Closure_id.equal f1.relative_to f1.relative_to
+  | Fselect_closure _, _ | _, Fselect_closure _ -> false
   | Fvar_within_closure (v1, _), Fvar_within_closure (v2, _) ->
-      same v1.vc_closure v2.vc_closure &&
-      Closure_id.equal v1.vc_fun v2.vc_fun &&
-      Var_within_closure.equal v1.vc_var v2.vc_var
+      same v1.closure v2.closure &&
+      Closure_id.equal v1.closure_id v2.closure_id &&
+      Var_within_closure.equal v1.var v2.var
   | Fvar_within_closure _, _ | _, Fvar_within_closure _ -> false
   | Flet (k1, v1, a1, b1, _), Flet (k2, v2, a2, b2, _) ->
       k1 = k2 && Variable.equal v1 v2 && same a1 a2 && same b1 b2
@@ -209,11 +206,11 @@ and samebinding (v1, c1) (v2, c2) =
 
 and sameswitch fs1 fs2 =
   let samecase (n1, a1) (n2, a2) = n1 = n2 && same a1 a2 in
-  fs1.fs_numconsts = fs2.fs_numconsts &&
-  fs1.fs_numblocks = fs2.fs_numblocks &&
-  samelist samecase fs1.fs_consts fs2.fs_consts &&
-  samelist samecase fs1.fs_blocks fs2.fs_blocks &&
-  sameoption same fs1.fs_failaction fs2.fs_failaction
+  fs1.numconsts = fs2.numconsts &&
+  fs1.numblocks = fs2.numblocks &&
+  samelist samecase fs1.consts fs2.consts &&
+  samelist samecase fs1.blocks fs2.blocks &&
+  sameoption same fs1.failaction fs2.failaction
 
 let can_be_merged = same
 
@@ -228,9 +225,9 @@ let fold_over_exprs_for_variables_bound_by_closure ~fun_id ~clos_id ~clos
   Variable.Set.fold (fun var acc ->
       let expr : _ Flambda.t =
         Fvar_within_closure
-          ({ vc_closure = Fvar (clos_id, Expr_id.create ());
-             vc_fun = fun_id;
-             vc_var = Var_within_closure.wrap var;
+          ({ closure = Fvar (clos_id, Expr_id.create ());
+             closure_id = fun_id;
+             var = Var_within_closure.wrap var;
            },
            Expr_id.create ())
       in
@@ -264,295 +261,16 @@ let make_closure_declaration ~id ~body ~params : _ Flambda.t =
       (Variable.Map.filter (fun id _ -> not (Variable.Set.mem id param_set)) sb)
       Variable.Map.empty in
   let current_unit = Symbol.Compilation_unit.get_current_exn () in
-  Fclosure
-    ({ fu_closure =
+  Fselect_closure
+    ({ set_of_closures =
          Fset_of_closures
-           ({ cl_fun =
-                { ident = Set_of_closures_id.create current_unit;
+           ({ function_decls =
+                { set_of_closures_id = Set_of_closures_id.create current_unit;
                   funs = Variable.Map.singleton id function_declaration;
                   compilation_unit = current_unit };
-              cl_free_var = fv';
-              cl_specialised_arg = Variable.Map.empty },
+              free_vars = fv';
+              specialised_args = Variable.Map.empty },
             Expr_id.create ());
-       fu_fun = Closure_id.wrap id;
-       fu_relative_to = None},
+       closure_id = Closure_id.wrap id;
+       relative_to = None},
      Expr_id.create ())
-
-
-(* CR pchambart to pchambart: in fact partial application doesn't work because
-   there are no 'known' partial application left: they are converted to
-   applications new partial function declaration.
-   That can be improved (and many other cases) by keeping track of aliases in
-   closure of functions. *)
-
-(* A parameter [x] of the function [f] is considered as unchanging if during
-   an 'external' (call from outside the set of closures) call of [f], every
-   recursive call of [f] all the instances of [x] are aliased to the original
-   one.
-
-   This function computes an underapproximation of that set by computing the
-   flow of parameters between the different function of the set of closures.
-   We will write (f, x) <- (g, y) to denote that the parameter [x] of the
-   function [f] can be an alias of the parameter [y] of the function [g].
-   (f, x) <- Anything denote that unknown values can flow to [x].
-   The '<-' relation is transitive.
-
-   [x] is not unchanging if either
-      (f, x) <- Anything
-   or (f, x) <- (f, y) with x != y
-
-   Notice that having (f, x) <- (g, a) and (f, x) <- (g, b) does not make
-   x not unchanging. This is because (g, a) and (g, b) represent necessarily
-   different values only if g is the externaly called function. If some
-   value where created during the execution of the function that could
-   flow to (g, a), then (g, a) <- Anything, so (f, x) <- Anything.
-
- *)
-
-(* This is computed in two steps:
-   * accumulate the atomic <- relations
-   * compute the transitive closure
-
-   We record [(f, x) <- Argument (g, y)] when the function g calls f and
-   the y parameter of g is used as argument for the x parameter of f. For
-   instance in
-
-     let rec f x = ...
-     and g y = f x
-
-   We record [(f, x) <- Anything] when some unknown values can flow to a the
-   [y] parameter.
-
-     let rec f x = f 1
-
-   We record also [(f, x) <- Anything] if [f] could escape. This is over
-   approximated by considering that a function escape when its variable is used
-   for something else than an application:
-
-     let rec f x = (f,f)
-
-
-  The <- relation is represented by the type
-
-     t Pair_var_var.Map.t
-
-  if [Pair_var_var.Set.mem (g, y) s] and
-  [Argument s = Pair_var_var.Map.find (f, x) relation]
-  then (f, x) <- (g, y) is in the relation.
-
-*)
-
-module Pair_var_var =
-  Ext_types.Identifiable.Make(Ext_types.Pair(Variable.M)(Variable.M))
-
-type t =
-  | Anything
-  | Arguments of Pair_var_var.Set.t
-
-let transitive_closure state =
-  let union s1 s2 =
-    match s1, s2 with
-    | Anything, _ | _, Anything -> Anything
-    | Arguments s1, Arguments s2 -> Arguments (Pair_var_var.Set.union s1 s2)
-  in
-  let equal s1 s2 =
-    match s1, s2 with
-    | Anything, Arguments _ | Arguments _, Anything -> false
-    | Anything, Anything -> true
-    | Arguments s1, Arguments s2 -> Pair_var_var.Set.equal s1 s2
-  in
-  let update arg state =
-    let original_set =
-      try Pair_var_var.Map.find arg state with
-      | Not_found -> Arguments Pair_var_var.Set.empty
-    in
-    match original_set with
-    | Anything -> state
-    | Arguments arguments ->
-        let set =
-          Pair_var_var.Set.fold
-            (fun orig acc->
-               let set =
-                 try Pair_var_var.Map.find orig state with
-                 | Not_found -> Arguments Pair_var_var.Set.empty in
-               union set acc)
-            arguments original_set
-        in
-        Pair_var_var.Map.add arg set state
-  in
-  let once state =
-    Pair_var_var.Map.fold (fun arg _ state -> update arg state) state state
-  in
-  let rec fp state =
-    let state' = once state in
-    if Pair_var_var.Map.equal equal state state'
-    then state
-    else fp state'
-  in
-  fp state
-
-let unchanging_params_in_recursion (decls : _ Flambda.function_declarations) =
-  let escaping_functions = ref Variable.Set.empty in
-  let relation = ref Pair_var_var.Map.empty in
-  let variables_at_position =
-    Variable.Map.map (fun (decl : _ Flambda.function_declaration) ->
-        Array.of_list decl.params)
-      decls.funs
-  in
-  let link
-      ~callee ~callee_arg
-      ~caller ~caller_arg =
-    let kind =
-      try Pair_var_var.Map.find (callee,callee_arg) !relation with
-      | Not_found -> Arguments Pair_var_var.Set.empty in
-    match kind with
-    | Anything -> ()
-    | Arguments set ->
-        relation :=
-          Pair_var_var.Map.add (callee,callee_arg)
-            (Arguments (Pair_var_var.Set.add (caller,caller_arg) set)) !relation
-  in
-  let mark ~callee ~callee_arg =
-    relation := Pair_var_var.Map.add (callee,callee_arg) Anything !relation
-  in
-  let find_callee_arg ~callee ~callee_pos =
-    match Variable.Map.find callee variables_at_position with
-    | exception Not_found -> None (* not a recursive call *)
-    | arr ->
-        if callee_pos < Array.length arr then
-          (* ignore overapplied parameters: they are applied to another function *)
-          Some arr.(callee_pos)
-        else None
-  in
-  (* If the called closure is in the current set of closures, record the
-     relation (callee, callee_arg) <- (caller, caller_arg) *)
-  let check_argument ~caller ~callee ~callee_pos arg =
-    match find_callee_arg ~callee ~callee_pos with
-    | None -> () (* not a recursive call *)
-    | Some callee_arg ->
-        match (arg : _ Flambda.t) with
-        | Fvar(caller_arg,_) ->
-            begin
-              match Variable.Map.find caller decls.funs with
-              | exception Not_found ->
-                  assert false
-              | { params } ->
-                  if List.mem caller_arg params then
-                    link ~caller ~caller_arg ~callee ~callee_arg
-                  else
-                    mark ~callee ~callee_arg
-            end
-        | _ -> mark ~callee ~callee_arg
-  in
-  let test_escape var =
-    if Variable.Map.mem var decls.funs
-    then escaping_functions := Variable.Set.add var !escaping_functions
-  in
-  let arity ~callee =
-    match Variable.Map.find callee decls.funs with
-    | exception Not_found -> 0
-    | func -> function_arity func
-  in
-  let rec loop ~caller (expr : _ Flambda.t) =
-    match expr with
-    | Fvar (var,_) -> test_escape var
-    | Fapply ({ ap_function = Fvar(callee,_); ap_arg }, _) ->
-        let num_args = List.length ap_arg in
-        for callee_pos = num_args to (arity callee) - 1 do
-          match find_callee_arg ~callee ~callee_pos with
-          | None -> ()
-          | Some callee_arg -> mark ~callee ~callee_arg
-          (* if a function is partially aplied, consider all missing
-             arguments as not kept*)
-        done;
-        List.iteri (fun callee_pos arg ->
-            check_argument ~caller ~callee ~callee_pos arg)
-          ap_arg;
-        List.iter (loop ~caller) ap_arg
-    | e ->
-        Flambdaiter.apply_on_subexpressions (loop ~caller) e
-  in
-  Variable.Map.iter (fun caller (decl : _ Flambda.function_declaration) ->
-      loop caller decl.body)
-    decls.funs;
-  let relation =
-    Variable.Map.fold (fun func_var
-          ({ params } : _ Flambda.function_declaration) relation ->
-        if Variable.Set.mem func_var !escaping_functions
-        then
-          List.fold_left (fun relation param ->
-              Pair_var_var.Map.add (func_var,param) Anything relation)
-            relation params
-        else relation)
-      decls.funs !relation
-  in
-  let result = transitive_closure relation in
-  let not_unchanging =
-    Pair_var_var.Map.fold (fun (func,var) set not_unchanging ->
-        match set with
-        | Anything -> Variable.Set.add var not_unchanging
-        | Arguments set ->
-            if Pair_var_var.Set.exists (fun (func', var') ->
-                Variable.equal func func' && not (Variable.equal var var'))
-                set
-            then Variable.Set.add var not_unchanging
-            else not_unchanging)
-      result Variable.Set.empty
-  in
-  let variables = Variable.Map.fold (fun _
-        ({ params } : _ Flambda.function_declaration) set ->
-      Variable.Set.union (Variable.Set.of_list params) set)
-    decls.funs Variable.Set.empty
-  in
-  Variable.Set.diff variables not_unchanging
-
-type argument =
-  | Used
-  | Argument of Variable.t
-
-let unused_arguments (decls : _ Flambda.function_declarations) : Variable.Set.t =
-  let used_variables = ref Variable.Set.empty in
-  let used_variable var =
-    used_variables := Variable.Set.add var !used_variables
-  in
-  let variables_at_position =
-    Variable.Map.fold (fun var (decl : _ Flambda.function_declaration) map ->
-        let cid = Closure_id.wrap var in
-        Closure_id.Map.add cid (Array.of_list decl.params) map)
-      decls.funs Closure_id.Map.empty
-  in
-  let find_callee_arg ~callee ~callee_pos =
-    match Closure_id.Map.find callee variables_at_position with
-    | exception Not_found -> Used (* not a recursive call *)
-    | arr ->
-        assert(callee_pos < Array.length arr);
-        (* Direct calls don't have overapplication *)
-        Argument arr.(callee_pos)
-  in
-  let rec loop (expr : _ Flambda.t) =
-    match expr with
-    | Fvar (var,_) -> used_variable var
-    | Fapply ({ ap_function; ap_arg; ap_kind = Direct callee }, _) ->
-        List.iteri (fun callee_pos arg ->
-            match arg with
-            | Flambda.Fvar (var, _) -> begin
-                match find_callee_arg ~callee ~callee_pos with
-                | Used -> used_variable var
-                | Argument param ->
-                    if not (Variable.equal var param) then
-                      used_variable var
-              end
-            | _ -> loop arg)
-          ap_arg;
-        loop ap_function
-    | e ->
-        Flambdaiter.apply_on_subexpressions loop e
-  in
-  Variable.Map.iter (fun caller (decl : _ Flambda.function_declaration) ->
-      loop decl.body)
-    decls.funs;
-  let arguments = Variable.Map.fold (fun _ decl acc ->
-      Variable.Set.union acc (Variable.Set.of_list decl.Flambda.params))
-      decls.funs Variable.Set.empty
-  in
-  Variable.Set.diff arguments !used_variables

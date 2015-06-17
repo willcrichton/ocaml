@@ -13,8 +13,8 @@
 open Ext_types
 open Abstract_identifiers
 
-module A = Flambdaapprox
-module C = Flambdacost
+module A = Simple_value_approx
+module C = Inlining_cost
 
 external swap16 : int -> int = "%bswap16"
 external swap32 : int32 -> int32 = "%bswap_int32"
@@ -36,8 +36,8 @@ let lift_lets tree =
 let lift_set_of_closures tree =
   let aux (expr : _ Flambda.t) : _ Flambda.t =
     match expr with
-    | Fclosure({ fu_closure = Fset_of_closures(set, dset) } as closure, d) ->
-        let decl = Flambdautils.find_declaration closure.fu_fun set.cl_fun in
+    | Fselect_closure({ set_of_closures = Fset_of_closures(set, dset) } as closure, d) ->
+        let decl = Flambdautils.find_declaration closure.closure_id set.function_decls in
         if not decl.stub then
           expr
         else
@@ -48,10 +48,11 @@ let lift_set_of_closures tree =
               ~current_compilation_unit:(Compilenv.current_unit ())
               "set_of_closures"
           in
-          Flet(Not_assigned, set_of_closures_var,
+          Flet(Immutable, set_of_closures_var,
                Fset_of_closures(set, dset),
-               Fclosure({ closure with
-                          fu_closure = Fvar (set_of_closures_var, Expr_id.create ()) },
+               Fselect_closure({ closure with
+                          set_of_closures =
+                            Fvar (set_of_closures_var, Expr_id.create ()) },
                         d),
                Expr_id.create ())
     | e -> e
@@ -67,72 +68,77 @@ let remove_unused_closure_variables tree =
     let used_fun = ref Closure_id.Set.empty in
     let aux (expr : _ Flambda.t) =
       match expr with
-      | Fvar_within_closure({ vc_var; vc_fun }, _) ->
-          used := Var_within_closure.Set.add vc_var !used;
-          used_fun := Closure_id.Set.add vc_fun !used_fun;
-      | Fclosure({ fu_fun; fu_relative_to }, _) ->
-          used_fun := Closure_id.Set.add fu_fun !used_fun;
-          begin match fu_relative_to with
+      | Fvar_within_closure({ var; closure_id }, _) ->
+          used := Var_within_closure.Set.add var !used;
+          used_fun := Closure_id.Set.add closure_id !used_fun;
+      | Fselect_closure({ closure_id; relative_to }, _) ->
+          used_fun := Closure_id.Set.add closure_id !used_fun;
+          begin match relative_to with
           | None -> ()
-          | Some fu_relative_to ->
-              used_fun := Closure_id.Set.add fu_relative_to !used_fun
+          | Some relative_to ->
+              used_fun := Closure_id.Set.add relative_to !used_fun
           end
-      | e -> ()
+      | _ -> ()
     in
     Flambdaiter.iter aux tree;
     !used, !used_fun
   in
   let aux (expr : _ Flambda.t) : _ Flambda.t =
     match expr with
-    | Fset_of_closures ({ cl_fun; cl_free_var } as closure, eid) ->
+    | Fset_of_closures ({ function_decls; free_vars } as closure, eid) ->
        let all_free_var =
          Variable.Map.fold
            (fun _ { Flambda. free_variables } acc ->
              Variable.Set.union free_variables acc)
-           cl_fun.funs
+           function_decls.funs
            Variable.Set.empty in
-       let cl_free_var =
+       let free_vars =
          Variable.Map.filter (fun id expr ->
              Variable.Set.mem id all_free_var
              || Var_within_closure.Set.mem (Var_within_closure.wrap id)
                used_variable_within_closure
-             || not (Flambdaeffects.no_effects expr))
-           cl_free_var in
-       let cl_fun =
-         { cl_fun with
+             || not (Effect_analysis.no_effects expr))
+           free_vars in
+       let function_decls =
+         { function_decls with
            funs = Variable.Map.filter (fun fun_id _ ->
                Variable.Set.mem fun_id all_free_var
                || Closure_id.Set.mem (Closure_id.wrap fun_id)
                  used_closure_id)
-               cl_fun.funs } in
-       Fset_of_closures ({ closure with cl_free_var; cl_fun }, eid)
+               function_decls.funs } in
+       Fset_of_closures ({ closure with free_vars; function_decls }, eid)
     | e -> e
   in
   Flambdaiter.map aux tree
 
 (* CR mshinwell: rename [eid] and/or [annot] to be consistent *)
 let const_int_expr expr n eid =
-  if Flambdaeffects.no_effects expr
-  then A.make_const_int n eid
-  else expr, A.value_int n
+  if Effect_analysis.no_effects expr then
+    let (new_expr, approx) = A.make_const_int n eid in
+    new_expr, approx, C.Benefit.remove_code expr C.Benefit.zero
+  else expr, A.value_int n, C.Benefit.zero
 let const_char_expr expr c eid =
-  if Flambdaeffects.no_effects expr
-  then A.make_const_int (Char.code c) eid
-  else expr, A.value_int (Char.code c)
+  if Effect_analysis.no_effects expr then
+    let (new_expr, approx) = A.make_const_int (Char.code c) eid in
+    new_expr, approx, C.Benefit.remove_code expr C.Benefit.zero
+  else expr, A.value_int (Char.code c), C.Benefit.zero
 let const_ptr_expr expr n eid =
-  if Flambdaeffects.no_effects expr
-  then A.make_const_ptr n eid
-  else expr, A.value_constptr n
+  if Effect_analysis.no_effects expr then
+    let (new_expr, approx) = A.make_const_ptr n eid in
+    new_expr, approx, C.Benefit.remove_code expr C.Benefit.zero
+  else expr, A.value_constptr n, C.Benefit.zero
 let const_bool_expr expr b eid =
   const_ptr_expr expr (if b then 1 else 0) eid
 let const_float_expr expr f eid =
-  if Flambdaeffects.no_effects expr
-  then A.make_const_float f eid
-  else expr, A.value_float f
+  if Effect_analysis.no_effects expr then
+    let (new_expr, approx) = A.make_const_float f eid in
+    new_expr, approx, C.Benefit.remove_code expr C.Benefit.zero
+  else expr, A.value_float f, C.Benefit.zero
 let const_boxed_int_expr expr t i eid =
-  if Flambdaeffects.no_effects expr
-  then A.make_const_boxed_int t i eid
-  else expr, A.value_boxed_int t i
+  if Effect_analysis.no_effects expr then
+    let (new_expr, approx) = A.make_const_boxed_int t i eid in
+    new_expr, approx, C.Benefit.remove_code expr C.Benefit.zero
+  else expr, A.value_boxed_int t i, C.Benefit.zero
 
 let const_comparison_expr expr cmp x y eid =
   let open Lambda in
@@ -155,34 +161,35 @@ end) = struct
      (a) value approximations; and (b) side effect analysis. *)
   let sequential_op ~arg1 ~(arg1_approx : A.t) ~arg2 ~(arg2_approx : A.t)
         ~dbg ~annot =
-    let arg1_no_effects = Flambdaeffects.no_effects arg1 in
-    let arg2_no_effects = Flambdaeffects.no_effects arg2 in
+    let arg1_no_effects = Effect_analysis.no_effects arg1 in
+    let arg2_no_effects = Effect_analysis.no_effects arg2 in
     let arg2_annot = Flambdautils.data_at_toplevel_node arg2 in
-    let completely_eliminated () : _ Flambda.t * A.t * C.benefit =
+    let module B = C.Benefit in
+    let completely_eliminated () : _ Flambda.t * A.t * B.t =
       Fconst (Fconst_pointer G.canonical_absorbing_element, annot),
         A.value_constptr G.canonical_absorbing_element,
-        C.remove_branch (C.remove_code arg1 (
-          C.remove_code arg2 C.no_benefit))
+        B.remove_branch (B.remove_code arg1 (
+          B.remove_code arg2 B.zero))
     in
     match arg1_approx.descr with
     | (Value_int n | Value_constptr n) when G.is_absorbing_element n ->
       if arg1_no_effects then
         completely_eliminated ()
       else
-        arg1, arg1_approx, C.remove_branch (C.remove_code arg2 C.no_benefit)
-    | (Value_int n | Value_constptr n) -> (* when not the absorbing element *)
+        arg1, arg1_approx, B.remove_branch (B.remove_code arg2 B.zero)
+    | (Value_int _ | Value_constptr _) -> (* when not the absorbing element *)
       if arg1_no_effects then
-        arg2, arg2_approx, C.remove_branch (C.remove_code arg1 C.no_benefit)
+        arg2, arg2_approx, B.remove_branch (B.remove_code arg1 B.zero)
       else
         begin match arg2_approx.descr with
         | (Value_int arg2_val | Value_constptr arg2_val)
             when arg2_no_effects ->
           Fsequence (arg1, Fconst (Fconst_pointer arg2_val, arg2_annot),
               annot), arg2_approx,
-            C.remove_branch (C.remove_code arg2 C.no_benefit)
+            B.remove_branch (B.remove_code arg2 B.zero)
         | _ ->
           Fsequence (arg1, arg2, annot), arg2_approx,
-            C.remove_branch C.no_benefit
+            B.remove_branch B.zero
         end
     | _ ->
       match arg2_approx.descr with
@@ -194,17 +201,17 @@ end) = struct
         | false, false ->
           Fprim (G.primitive, [arg1; arg2], dbg, annot),
             A.value_constptr G.canonical_absorbing_element,
-              C.no_benefit
+              B.zero
         | false, true ->
           Fsequence (arg1,
               Fconst (Fconst_pointer G.canonical_absorbing_element,
                 arg2_annot), annot),
             A.value_constptr G.canonical_absorbing_element,
-              C.remove_branch (C.remove_code arg2 C.no_benefit)
+              B.remove_branch (B.remove_code arg2 B.zero)
         end
       | _ ->
         Fprim (G.primitive, [arg1; arg2], dbg, annot),
-          A.value_unknown, C.no_benefit
+          A.value_unknown, B.zero
 end
 
 module Simplify_and = Simplify_sequential_logical_operator (struct
@@ -255,7 +262,7 @@ end) = struct
     | Pcvtbint (kind, Pint64) when kind = I.kind -> eval_conv A.Int64 I.to_int64
     | Pnegbint kind when kind = I.kind -> eval I.neg
     | Pbbswap kind when kind = I.kind -> eval I.swap
-    | _ -> expr, A.value_unknown
+    | _ -> expr, A.value_unknown, C.Benefit.zero
 
   let simplify_binop (p : Lambda.primitive) (kind : I.t A.boxed_int)
         expr (n1 : I.t) (n2 : I.t) eid =
@@ -272,7 +279,7 @@ end) = struct
     | Pxorbint kind when kind = I.kind -> eval I.logxor
     | Pbintcomp (kind, c) when kind = I.kind ->
       const_comparison_expr expr c n1 n2 eid
-    | _ -> expr, A.value_unknown
+    | _ -> expr, A.value_unknown, C.Benefit.zero
 
   let simplify_binop_int (p : Lambda.primitive) (kind : I.t A.boxed_int)
         expr (n1 : I.t) (n2 : int) eid =
@@ -282,7 +289,7 @@ end) = struct
     | Plslbint kind when kind = I.kind && precond -> eval I.shift_left
     | Plsrbint kind when kind = I.kind && precond -> eval I.shift_right_logical
     | Pasrbint kind when kind = I.kind && precond -> eval I.shift_right
-    | _ -> expr, A.value_unknown
+    | _ -> expr, A.value_unknown, C.Benefit.zero
 end
 
 module Simplify_boxed_nativeint = Simplify_boxed_integer_operator (struct
@@ -307,11 +314,13 @@ module Simplify_boxed_int64 = Simplify_boxed_integer_operator (struct
   let kind = Lambda.Pint64
 end)
 
-let primitive (p : Lambda.primitive) (args, approxs) expr dbg : _ Flambda.t * A.t =
+let primitive (p : Lambda.primitive) (args, approxs) expr dbg
+  : _ Flambda.t * A.t * Inlining_cost.Benefit.t =
   let fpc = !Clflags.float_const_prop in
   match p with
   | Pmakeblock(tag, Asttypes.Immutable) ->
-    expr, A.value_block(tag, Array.of_list approxs)
+    let tag = Simple_value_approx.Tag.create_exn tag in
+    expr, A.value_block(tag, Array.of_list approxs), C.Benefit.zero
   | Pignore -> begin
       let eid = Flambdautils.data_at_toplevel_node expr in
       match args, A.descrs approxs with
@@ -337,7 +346,7 @@ let primitive (p : Lambda.primitive) (args, approxs) expr dbg : _ Flambda.t * A.
         const_boxed_int_expr expr Int32 (Int32.of_int x) eid
       | Pbintofint Pint64 ->
         const_boxed_int_expr expr Int64 (Int64.of_int x) eid
-      | _ -> expr, A.value_unknown
+      | _ -> expr, A.value_unknown, C.Benefit.zero
       end
     | [(Value_int x | Value_constptr x); (Value_int y | Value_constptr y)] ->
       let shift_precond = 0 <= y && y < 8 * Arch.size_int in
@@ -356,7 +365,7 @@ let primitive (p : Lambda.primitive) (args, approxs) expr dbg : _ Flambda.t * A.
       | Pintcomp cmp -> const_comparison_expr expr cmp x y eid
       | Pisout -> const_bool_expr expr (y > x || y < 0) eid
       (* [Psequand] and [Psequor] have special simplification rules, above. *)
-      | _ -> expr, A.value_unknown
+      | _ -> expr, A.value_unknown, C.Benefit.zero
       end
     | [Value_constptr x] ->
       begin match p with
@@ -376,14 +385,14 @@ let primitive (p : Lambda.primitive) (args, approxs) expr dbg : _ Flambda.t * A.
         | Ostype_win32 -> const_bool_expr expr (Sys.os_type = "Win32") eid
         | Ostype_cygwin -> const_bool_expr expr (Sys.os_type = "Cygwin") eid
         end
-      | _ -> expr, A.value_unknown
+      | _ -> expr, A.value_unknown, C.Benefit.zero
       end
     | [Value_float x] when fpc ->
       begin match p with
       | Pintoffloat -> const_int_expr expr (int_of_float x) eid
       | Pnegfloat -> const_float_expr expr (-. x) eid
       | Pabsfloat -> const_float_expr expr (abs_float x) eid
-      | _ -> expr, A.value_unknown
+      | _ -> expr, A.value_unknown, C.Benefit.zero
       end
     | [Value_float n1; Value_float n2] when fpc ->
       begin match p with
@@ -392,7 +401,7 @@ let primitive (p : Lambda.primitive) (args, approxs) expr dbg : _ Flambda.t * A.
       | Pmulfloat -> const_float_expr expr (n1 *. n2) eid
       | Pdivfloat -> const_float_expr expr (n1 /. n2) eid
       | Pfloatcomp c  -> const_comparison_expr expr c n1 n2 eid
-      | _ -> expr, A.value_unknown
+      | _ -> expr, A.value_unknown, C.Benefit.zero
       end
     | [A.Value_boxed_int(A.Nativeint, n)] ->
       Simplify_boxed_nativeint.simplify_unop p Nativeint expr n eid
@@ -422,14 +431,15 @@ let primitive (p : Lambda.primitive) (args, approxs) expr dbg : _ Flambda.t * A.
         | Pstringrefu
         | Pstringrefs ->
             const_char_expr expr s.[x] eid
-        | _ -> expr, A.value_unknown
+        | _ -> expr, A.value_unknown, C.Benefit.zero
         end
     | [Value_string { size; contents = None };
        (Value_int x | Value_constptr x)]
       when x >= 0 && x < size && p = Pstringrefs ->
         Flambda.Fprim(Pstringrefu, args, dbg, eid),
-        A.value_unknown
-    | _ -> expr, A.value_unknown
+        A.value_unknown,
+        C.Benefit.zero (* we improved it, but there is no way to account for that *)
+    | _ -> expr, A.value_unknown, C.Benefit.zero
 
 let rename_var var =
   Variable.rename ~current_compilation_unit:(Compilenv.current_unit ()) var
@@ -440,7 +450,7 @@ let remove_params unused (fun_decl: _ Flambda.function_declaration) =
   let unused_params = List.filter (fun v ->
       Variable.Set.mem v fun_decl.free_variables) unused_params in
   let body = List.fold_left (fun body var ->
-      Flambda.Flet(Not_assigned,
+      Flambda.Flet(Immutable,
            var,
            Fconst(Fconst_pointer 0, nid ()),
            body,
@@ -459,30 +469,30 @@ let remove_params unused (fun_decl: _ Flambda.function_declaration) =
 
 let make_stub unused var (fun_decl : _ Flambda.function_declaration) =
   let renamed = rename_var var in
-  let args = List.map (fun var -> var, rename_var var) fun_decl.params in
-  let ap_arg =
+  let args' = List.map (fun var -> var, rename_var var) fun_decl.params in
+  let args =
     List.map (fun (_, var) -> Flambda.Fvar(var, nid ()))
-      (List.filter (fun (var, _) -> not (Variable.Set.mem var unused)) args)
+      (List.filter (fun (var, _) -> not (Variable.Set.mem var unused)) args')
   in
-  let ap_kind = Flambda.Direct (Closure_id.wrap renamed) in
-  let ap_dbg = fun_decl.dbg in
-  let body : _ Flambda.flambda =
+  let kind = Flambda.Direct (Closure_id.wrap renamed) in
+  let dbg = fun_decl.dbg in
+  let body : _ Flambda.t =
     Fapply(
-      { ap_function = Fvar(renamed, nid ());
-        ap_arg;
-        ap_kind;
-        ap_dbg;
-        ap_return_arity = 1 },
+      { func = Fvar(renamed, nid ());
+        args;
+        kind;
+        dbg;
+        return_arity = 1 },
       nid ())
   in
   let free_variables =
     List.fold_left
       (fun set (_, renamed_arg) -> Variable.Set.add renamed_arg set)
       (Variable.Set.singleton renamed)
-      args
+      args'
   in
   let decl : _ Flambda.function_declaration = {
-    params = List.map snd args;
+    params = List.map snd args';
     body;
     free_variables;
     stub = true;
@@ -492,9 +502,9 @@ let make_stub unused var (fun_decl : _ Flambda.function_declaration) =
   in
   decl, renamed
 
-let separate_unused_arguments (set_of_closures : _ Flambda.fset_of_closures) =
-  let decl = set_of_closures.cl_fun in
-  let unused = Flambdautils.unused_arguments decl in
+let separate_unused_arguments (set_of_closures : _ Flambda.set_of_closures) =
+  let decl = set_of_closures.function_decls in
+  let unused = Invariant_params.unused_arguments decl in
   let non_stub_arguments =
     Variable.Map.fold (fun _ (decl : _ Flambda.function_declaration) acc ->
         if decl.stub then
@@ -521,14 +531,14 @@ let separate_unused_arguments (set_of_closures : _ Flambda.fset_of_closures) =
         )
         decl.funs Variable.Map.empty
     in
-    let cl_specialised_arg =
+    let specialised_args =
       Variable.Map.filter (fun param _ -> not (Variable.Set.mem param unused))
-        set_of_closures.cl_specialised_arg
+        set_of_closures.specialised_args
     in
     Some
       { set_of_closures with
-        cl_fun = { decl with funs };
-        cl_specialised_arg; }
+        function_decls = { decl with funs };
+        specialised_args; }
   end
 
 (* Spliting is not always beneficial. For instance when a function
@@ -553,7 +563,7 @@ let separate_unused_arguments_in_closures tree =
     match expr with
     | Fset_of_closures (set_of_closures, eid) -> begin
         if candidate_for_spliting_for_unused_arguments
-            set_of_closures.cl_fun then
+            set_of_closures.function_decls then
           match separate_unused_arguments set_of_closures with
           | None -> expr
           | Some set_of_closures ->
@@ -628,22 +638,22 @@ let unbox_fn ({body} : 'a Flambda.function_declaration) num_returns =
 let unbox_returns tree =
   let open Flambda in
   Flambdaiter.map (function
-    | Fclosure({fu_closure =
-                  Fset_of_closures({cl_fun; cl_free_var; cl_specialised_arg}, dset)}
+    | Fselect_closure({set_of_closures =
+                  Fset_of_closures({function_decls; free_vars; specialised_args}, dset)}
                as closure,
                closure_expr_id) as flam ->
       if not (!Clflags.dump_flambda) ||
-        Variable.Map.cardinal cl_fun.funs <> 1
+        Variable.Map.cardinal function_decls.funs <> 1
       then flam else
 
       (* Update return sites in the closure if eligible *)
-      let (fn_id, fn) = Variable.Map.choose cl_fun.funs in
+      let (fn_id, fn) = Variable.Map.choose function_decls.funs in
       let (can_unbox, num_returns, return_map) = check_can_unbox fn in
       if (not can_unbox) then flam else
 
       let fn = {fn with body = (unbox_fn fn num_returns); return_arity = num_returns} in
 
-      let mkvar = Variable.create ~current_compilation_unit:cl_fun.compilation_unit in
+      let mkvar = Variable.create ~current_compilation_unit:function_decls.compilation_unit in
       let mkvar_suffix v s = mkvar ((Variable.unique_name v) ^ s) in
 
       let unboxed_return_id = mkvar_suffix fn_id "_unboxed_return" in
@@ -671,11 +681,11 @@ let unbox_returns tree =
         Fswitch(
           Fvar(tag_var, Expr_id.create()),
           {
-            fs_numconsts = Int.Set.of_list (no_arg_variant :: tags);
-            fs_consts = (no_arg_variant, no_variant_case) :: (List.map mkblock tags);
-            fs_numblocks = Int.Set.empty;
-            fs_blocks = [];
-            fs_failaction = None;
+            numconsts = Int.Set.of_list (no_arg_variant :: tags);
+            consts = (no_arg_variant, no_variant_case) :: (List.map mkblock tags);
+            numblocks = Int.Set.empty;
+            blocks = [];
+            failaction = None;
           },
           Expr_id.create()) in
 
@@ -683,7 +693,7 @@ let unbox_returns tree =
         List.fold_left
           (fun acc (index, result_var) ->
              Flet(
-               Not_assigned,
+               Immutable,
                result_var,
                Fprim(Pgetblock_noheap(index),
                      [Fvar(unboxed_return_id, Expr_id.create())],
@@ -699,14 +709,14 @@ let unbox_returns tree =
       let inner_fn_id = mkvar_suffix fn_id "_unboxed" in
       let apply_inner =
         Flet(
-          Not_assigned,
+          Immutable,
           unboxed_return_id,
           Fapply({
-            ap_function = Fvar(inner_closure_id, Expr_id.create());
-            ap_arg = List.map (fun v -> Fvar(v, Expr_id.create())) wrapper_params;
-            ap_kind = Direct(Closure_id.wrap inner_fn_id);
-            ap_dbg = Debuginfo.none;
-            ap_return_arity = num_returns + 1;
+            func = Fvar(inner_closure_id, Expr_id.create());
+            args = List.map (fun v -> Fvar(v, Expr_id.create())) wrapper_params;
+            kind = Direct(Closure_id.wrap inner_fn_id);
+            dbg = Debuginfo.none;
+            return_arity = num_returns + 1;
           }, Expr_id.create()),
           field_bindings,
           Expr_id.create()) in
@@ -716,7 +726,7 @@ let unbox_returns tree =
       let new_free_closure_var =
         List.map
           (fun (key, value) -> (key, value, mkvar "tmp"))
-          (Variable.Map.bindings cl_free_var) in
+          (Variable.Map.bindings free_vars) in
       let inner_free_closure_var =
         List.fold_left
           (fun map (value, _, key) ->
@@ -749,19 +759,19 @@ let unbox_returns tree =
             with Not_found -> fv end
           | e -> e)
           fn.body in
-        {fn with body; free_variables = inner_free_fn_var} in
+        {fn with body; free_variables = inner_free_fn_var; return_arity = num_returns + 1} in
 
       let fn_binding =
         Flet(
-          Not_assigned,
+          Immutable,
           inner_closure_id,
-          Fclosure({
-            closure with fu_closure = Fset_of_closures({
-              cl_fun = {cl_fun with funs = Variable.Map.singleton inner_fn_id final_fn};
-              cl_free_var = inner_free_closure_var;
-              cl_specialised_arg = Variable.Map.empty;
+          Fselect_closure({
+            closure with set_of_closures = Fset_of_closures({
+              function_decls = {function_decls with funs = Variable.Map.singleton inner_fn_id final_fn};
+              free_vars = inner_free_closure_var;
+              specialised_args = Variable.Map.empty;
             }, dset);
-            fu_fun = Closure_id.wrap inner_fn_id},
+            closure_id = Closure_id.wrap inner_fn_id},
           Expr_id.create()),
           apply_inner,
           Expr_id.create()) in
@@ -779,18 +789,18 @@ let unbox_returns tree =
         stub = true; (* We want our wrapper to always get inlined *)
         dbg = Debuginfo.none} in
 
-      Fclosure({
-        fu_closure = Fset_of_closures({
-          cl_fun = {
-            ident = Set_of_closures_id.create cl_fun.compilation_unit;
+      Fselect_closure({
+        set_of_closures = Fset_of_closures({
+          function_decls = {
+            set_of_closures_id = Set_of_closures_id.create function_decls.compilation_unit;
             funs = Variable.Map.singleton fn_id new_fn;
-            compilation_unit = cl_fun.compilation_unit;
+            compilation_unit = function_decls.compilation_unit;
           };
-          cl_free_var;
-          cl_specialised_arg;
+          free_vars;
+          specialised_args;
         }, Expr_id.create());
-        fu_fun = Closure_id.wrap fn_id;
-        fu_relative_to = None;
+        closure_id = Closure_id.wrap fn_id;
+        relative_to = None;
       }, closure_expr_id)
 
    | flam -> flam)

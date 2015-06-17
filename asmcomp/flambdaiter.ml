@@ -1,27 +1,28 @@
-(***********************************************************************)
-(*                                                                     *)
-(*                                OCaml                                *)
-(*                                                                     *)
-(*                     Pierre Chambart, OCamlPro                       *)
-(*                                                                     *)
-(*  Copyright 2014 Institut National de Recherche en Informatique et   *)
-(*  en Automatique.  All rights reserved.  This file is distributed    *)
-(*  under the terms of the Q Public License version 1.0.               *)
-(*                                                                     *)
-(***********************************************************************)
+(**************************************************************************)
+(*                                                                        *)
+(*                                OCaml                                   *)
+(*                                                                        *)
+(*                       Pierre Chambart, OCamlPro                        *)
+(*                  Mark Shinwell, Jane Street Europe                     *)
+(*                                                                        *)
+(*   Copyright 2015 Institut National de Recherche en Informatique et     *)
+(*   en Automatique.  All rights reserved.  This file is distributed      *)
+(*   under the terms of the Q Public License version 1.0.                 *)
+(*                                                                        *)
+(**************************************************************************)
 
 open Abstract_identifiers
-open Flambda
 
-let apply_on_subexpressions f = function
+let apply_on_subexpressions f (flam : _ Flambda.t) =
+  match flam with
   | Fsymbol _
   | Fvar _
   | Fconst _
   | Funreachable _ -> ()
 
   | Fassign (_,f1,_)
-  | Fclosure({fu_closure = f1},_)
-  | Fvar_within_closure({vc_closure = f1},_) ->
+  | Fselect_closure({set_of_closures = f1},_)
+  | Fvar_within_closure({closure = f1},_) ->
     f f1
 
   | Flet ( _, _, f1, f2,_)
@@ -39,19 +40,21 @@ let apply_on_subexpressions f = function
   | Fprim (_,l,_,_) ->
     List.iter f l
 
-  | Fapply ({ap_function;ap_arg},_) ->
-    List.iter f (ap_function::ap_arg)
-  | Fset_of_closures ({cl_fun;cl_free_var},_) ->
-    Variable.Map.iter (fun _ v -> f v) cl_free_var;
-    Variable.Map.iter (fun _ ffun -> f ffun.body) cl_fun.funs
+  | Fapply ({func;args},_) ->
+    List.iter f (func::args)
+  | Fset_of_closures ({function_decls;free_vars},_) ->
+    Variable.Map.iter (fun _ v -> f v) free_vars;
+    Variable.Map.iter (fun _ (ffun : _ Flambda.function_declaration) ->
+        f ffun.body)
+      function_decls.funs
   | Fletrec (defs, body,_) ->
     List.iter (fun (_,l) -> f l) defs;
     f body
   | Fswitch (arg,sw,_) ->
     f arg;
-    List.iter (fun (_,l) -> f l) sw.fs_consts;
-    List.iter (fun (_,l) -> f l) sw.fs_blocks;
-    Misc.may f sw.fs_failaction
+    List.iter (fun (_,l) -> f l) sw.consts;
+    List.iter (fun (_,l) -> f l) sw.blocks;
+    Misc.may f sw.failaction
   | Fstringswitch (arg,sw,def,_) ->
     f arg;
     List.iter (fun (_,l) -> f l) sw;
@@ -59,15 +62,16 @@ let apply_on_subexpressions f = function
   | Fsend (_,f1,f2,fl,_,_) ->
     List.iter f (f1::f2::fl)
 
-let subexpressions = function
+let subexpressions (flam : _ Flambda.t) =
+  match flam with
   | Fsymbol _
   | Fvar _
   | Fconst _
   | Funreachable _ -> []
 
   | Fassign (_,f1,_)
-  | Fclosure({fu_closure = f1},_)
-  | Fvar_within_closure({vc_closure = f1},_) ->
+  | Fselect_closure({set_of_closures = f1},_)
+  | Fvar_within_closure({closure = f1},_) ->
       [f1]
 
   | Flet ( _, _, f1, f2,_)
@@ -84,20 +88,22 @@ let subexpressions = function
   | Fstaticraise (_,l,_)
   | Fprim (_,l,_,_) -> l
 
-  | Fapply ({ap_function;ap_arg},_) ->
-      (ap_function::ap_arg)
+  | Fapply ({func;args},_) ->
+      (func::args)
 
-  | Fset_of_closures ({cl_fun;cl_free_var},_) ->
-      let l = Variable.Map.fold (fun _ v l -> v :: l) cl_free_var [] in
-      Variable.Map.fold (fun _ f l -> f.body :: l) cl_fun.funs l
+  | Fset_of_closures ({function_decls;free_vars},_) ->
+      let l = Variable.Map.fold (fun _ v l -> v :: l) free_vars [] in
+      Variable.Map.fold (fun _ (f : _ Flambda.function_declaration) l ->
+          f.body :: l)
+        function_decls.funs l
 
   | Fletrec (defs, body,_) ->
       body :: (List.map snd defs)
 
   | Fswitch (arg,sw,_) ->
-      let l = List.fold_left (fun l (_,v) -> v :: l) [arg] sw.fs_consts in
-      let l = List.fold_left (fun l (_,v) -> v :: l) l sw.fs_blocks in
-      Misc.may_fold (fun f1 l -> f1 :: l) sw.fs_failaction l
+      let l = List.fold_left (fun l (_,v) -> v :: l) [arg] sw.consts in
+      let l = List.fold_left (fun l (_,v) -> v :: l) l sw.blocks in
+      Misc.may_fold (fun f1 l -> f1 :: l) sw.failaction l
 
   | Fstringswitch (arg,sw,def,_) ->
       let l = List.fold_left (fun l (_,v) -> v :: l) [arg] sw in
@@ -106,9 +112,8 @@ let subexpressions = function
   | Fsend (_,f1,f2,fl,_,_) ->
       (f1::f2::fl)
 
-
 let iter_general ~toplevel f t =
-  let rec aux t =
+  let rec aux (t : _ Flambda.t) =
     f t;
     match t with
     | Fsymbol _
@@ -116,8 +121,8 @@ let iter_general ~toplevel f t =
     | Fconst _ -> ()
 
     | Fassign (_,f1,_)
-    | Fclosure({fu_closure = f1},_)
-    | Fvar_within_closure({vc_closure = f1},_) ->
+    | Fselect_closure({set_of_closures = f1},_)
+    | Fvar_within_closure({closure = f1},_) ->
       aux f1
 
     | Flet ( _, _, f1, f2,_)
@@ -135,22 +140,25 @@ let iter_general ~toplevel f t =
     | Fprim (_,l,_,_) ->
       iter_list l
 
-    | Fapply ({ap_function = f1; ap_arg = fl},_) ->
+    | Fapply ({func = f1; args = fl},_) ->
       iter_list (f1::fl)
 
-    | Fset_of_closures ({cl_fun = funcs; cl_free_var = fv},_) ->
+    | Fset_of_closures ({function_decls = funcs; free_vars = fv},_) ->
       Variable.Map.iter (fun _ v -> aux v) fv;
-      if not toplevel
-      then Variable.Map.iter (fun _ ffun -> aux ffun.body) funcs.funs
+      if not toplevel then begin
+        Variable.Map.iter (fun _ (ffun : _ Flambda.function_declaration) ->
+            aux ffun.body)
+          funcs.funs
+      end
 
     | Fletrec (defs, body,_) ->
       List.iter (fun (_,l) -> aux l) defs;
       aux body
     | Fswitch (arg,sw,_) ->
       aux arg;
-      List.iter (fun (_,l) -> aux l) sw.fs_consts;
-      List.iter (fun (_,l) -> aux l) sw.fs_blocks;
-      Misc.may aux sw.fs_failaction
+      List.iter (fun (_,l) -> aux l) sw.consts;
+      List.iter (fun (_,l) -> aux l) sw.blocks;
+      Misc.may aux sw.failaction
     | Fstringswitch (arg,sw,def,_) ->
       aux arg;
       List.iter (fun (_,l) -> aux l) sw;
@@ -167,11 +175,12 @@ let iter f t = iter_general ~toplevel:false f t
 let iter_toplevel f t = iter_general ~toplevel:true f t
 
 let iter_on_closures f t =
-  let aux = function
+  let aux (flam : _ Flambda.t) =
+    match flam with
     | Fset_of_closures (clos,data) ->
         f clos data
     | Fassign _ | Fvar _
-    | Fsymbol _ | Fconst _ | Fapply _ | Fclosure _
+    | Fsymbol _ | Fconst _ | Fapply _ | Fselect_closure _
     | Fvar_within_closure _ | Flet _ | Fletrec _
     | Fprim _ | Fswitch _ | Fstaticraise _ | Fstaticcatch _
     | Ftrywith _ | Fifthenelse _ | Fsequence _ | Fstringswitch _
@@ -181,33 +190,34 @@ let iter_on_closures f t =
   iter aux t
 
 let map_general ~toplevel f tree =
-  let rec aux tree =
+  let rec aux (tree : _ Flambda.t) =
     let exp = match tree with
       | Fsymbol _ -> tree
-      | Fvar (id,annot) -> tree
-      | Fconst (cst,annot) -> tree
-      | Fapply ({ ap_function; ap_arg } as ap, annot) ->
-          Fapply ({ ap with ap_function = aux ap_function;
-                            ap_arg = List.map aux ap_arg; },
-                  annot)
-      | Fset_of_closures ({ cl_fun; cl_free_var;
-                    cl_specialised_arg },annot) ->
-          let cl_fun =
+      | Fvar _ -> tree
+      | Fconst _ -> tree
+      | Fapply ({ func; args; kind; dbg; return_arity }, annot) ->
+          Fapply ({ func = aux func;
+                    args = List.map aux args;
+                    kind; dbg; return_arity }, annot)
+      | Fset_of_closures ({ function_decls; free_vars;
+                    specialised_args },annot) ->
+          let function_decls =
             if toplevel
-            then cl_fun
+            then function_decls
             else
-              { cl_fun with
+              { function_decls with
                 funs = Variable.Map.map
-                    (fun ffun -> { ffun with body = aux ffun.body })
-                    cl_fun.funs } in
-          Fset_of_closures ({ cl_fun;
-                      cl_free_var = Variable.Map.map aux cl_free_var;
-                      cl_specialised_arg }, annot)
-      | Fclosure ({ fu_closure; fu_fun; fu_relative_to}, annot) ->
-          Fclosure ({ fu_closure = aux fu_closure;
-                       fu_fun; fu_relative_to}, annot)
+                    (fun (ffun : _ Flambda.function_declaration) ->
+                      { ffun with body = aux ffun.body })
+                    function_decls.funs } in
+          Fset_of_closures ({ function_decls;
+                      free_vars = Variable.Map.map aux free_vars;
+                      specialised_args }, annot)
+      | Fselect_closure ({ set_of_closures; closure_id; relative_to}, annot) ->
+          Fselect_closure ({ set_of_closures = aux set_of_closures;
+                       closure_id; relative_to}, annot)
       | Fvar_within_closure (vc, annot) ->
-          Fvar_within_closure ({ vc with vc_closure = aux vc.vc_closure }, annot)
+          Fvar_within_closure ({ vc with closure = aux vc.closure }, annot)
       | Flet(str, id, lam, body, annot) ->
           let lam = aux lam in
           let body = aux body in
@@ -260,9 +270,9 @@ let map_general ~toplevel f tree =
           let arg = aux arg in
           let sw =
             { sw with
-              fs_failaction = Misc.may_map aux sw.fs_failaction;
-              fs_consts = List.map (fun (i,v) -> i, aux v) sw.fs_consts;
-              fs_blocks = List.map (fun (i,v) -> i, aux v) sw.fs_blocks; } in
+              failaction = Misc.may_map aux sw.failaction;
+              consts = List.map (fun (i,v) -> i, aux v) sw.consts;
+              blocks = List.map (fun (i,v) -> i, aux v) sw.blocks; } in
           Fswitch(arg, sw, annot)
       | Fstringswitch(arg, sw, def, annot) ->
           let arg = aux arg in
@@ -279,21 +289,24 @@ let map_general ~toplevel f tree =
 let map f tree = map_general ~toplevel:false f tree
 let map_toplevel f tree = map_general ~toplevel:true f tree
 
-let expression_free_variables = function
+let expression_free_variables (flam : _ Flambda.t) =
+  match flam with
   | Fvar (id,_) -> Variable.Set.singleton id
   | Fassign (id,_,_) -> Variable.Set.singleton id
-  | Fset_of_closures ({cl_free_var; cl_specialised_arg},_) ->
-      let set = Variable.Map.keys (Variable.Map.revert cl_specialised_arg) in
+  | Fset_of_closures ({free_vars; specialised_args},_) ->
+      let set = Variable.Map.keys (Variable.Map.revert specialised_args) in
       Variable.Map.fold (fun _ expr set ->
           (* HACK:
              This is not needed, but it avoids moving lets inside free_vars *)
-          match expr with
+          match (expr : _ Flambda.t) with
           | Fvar(var, _) -> Variable.Set.add var set
           | _ -> set)
-        cl_free_var set
+        free_vars set
   | _ -> Variable.Set.empty
 
-let fold_subexpressions f acc = function
+let fold_subexpressions (type acc) f (acc : acc) (flam : _ Flambda.t)
+      : acc * _ Flambda.t =
+  match flam with
   | Ftrywith(body,id,handler,d) ->
       let acc, body = f acc Variable.Set.empty body in
       let acc, handler = f acc (Variable.Set.singleton id) handler in
@@ -333,42 +346,43 @@ let fold_subexpressions f acc = function
              acc, arg :: l) args (acc,[]) in
       acc, Fstaticraise (exn, args, d)
 
-  | Fset_of_closures ({ cl_fun; cl_free_var } as closure, d) ->
+  | Fset_of_closures ({ function_decls; free_vars } as closure, d) ->
       let acc, funs =
-        Variable.Map.fold (fun v fun_decl (acc, funs) ->
+        Variable.Map.fold
+          (fun v (fun_decl : _ Flambda.function_declaration) (acc, funs) ->
             let acc, body = f acc fun_decl.free_variables fun_decl.body in
             acc, Variable.Map.add v { fun_decl with body } funs)
-          cl_fun.funs (acc, Variable.Map.empty)
+          function_decls.funs (acc, Variable.Map.empty)
       in
-      let cl_fun = { cl_fun with funs } in
-      let acc, cl_free_var =
+      let function_decls = { function_decls with funs } in
+      let acc, free_vars =
         Variable.Map.fold (fun v flam (acc, free_vars) ->
             let acc, flam = f acc Variable.Set.empty flam in
             acc, Variable.Map.add v flam free_vars)
-          cl_free_var (acc, Variable.Map.empty)
+          free_vars (acc, Variable.Map.empty)
       in
-      acc, Fset_of_closures({ closure with cl_fun; cl_free_var }, d)
+      acc, Fset_of_closures({ closure with function_decls; free_vars }, d)
 
   | Fswitch (arg,
-             { fs_numconsts; fs_consts; fs_numblocks;
-               fs_blocks; fs_failaction }, d) ->
+             { numconsts; consts; numblocks;
+               blocks; failaction }, d) ->
       let acc, arg = f acc Variable.Set.empty arg in
       let aux (i,flam) (acc, l) =
         let acc, flam = f acc Variable.Set.empty flam in
         acc, (i,flam) :: l
       in
-      let acc, fs_consts = List.fold_right aux fs_consts (acc,[]) in
-      let acc, fs_blocks = List.fold_right aux fs_blocks (acc,[]) in
-      let acc, fs_failaction =
-        match fs_failaction with
+      let acc, consts = List.fold_right aux consts (acc,[]) in
+      let acc, blocks = List.fold_right aux blocks (acc,[]) in
+      let acc, failaction =
+        match failaction with
         | None -> acc, None
         | Some flam ->
             let acc, flam = f acc Variable.Set.empty flam in
             acc, Some flam in
       acc,
       Fswitch (arg,
-               { fs_numconsts; fs_consts; fs_numblocks;
-                 fs_blocks; fs_failaction }, d)
+               { numconsts; consts; numblocks;
+                 blocks; failaction }, d)
 
   | Fstringswitch (arg, sw, def, d) ->
       let acc, arg = f acc Variable.Set.empty arg in
@@ -385,14 +399,14 @@ let fold_subexpressions f acc = function
             acc, Some def in
       acc, Fstringswitch (arg, sw, def, d)
 
-  | Fapply ({ ap_function; ap_arg } as ap, d) ->
-      let acc, ap_function = f acc Variable.Set.empty ap_function in
-      let acc, ap_arg =
+  | Fapply ({ func; args; kind; dbg; return_arity }, d) ->
+      let acc, func = f acc Variable.Set.empty func in
+      let acc, args =
         List.fold_right
-          (fun arg (acc, l) ->
-             let acc, arg = f acc Variable.Set.empty arg in
-             acc, arg :: l) ap_arg (acc,[]) in
-      acc, Fapply ({ ap with ap_function; ap_arg }, d)
+          (fun args (acc, l) ->
+             let acc, args = f acc Variable.Set.empty args in
+             acc, args :: l) args (acc,[]) in
+      acc, Fapply ({ func; args; kind; dbg; return_arity }, d)
 
   | Fsend (kind, e1, e2, args, dbg, d) ->
       let acc, args =
@@ -432,13 +446,13 @@ let fold_subexpressions f acc = function
       let acc, flam = f acc Variable.Set.empty flam in
       acc, Fassign (v,flam,d)
 
-  | Fclosure(clos,d) ->
-      let acc, fu_closure = f acc Variable.Set.empty clos.fu_closure in
-      acc, Fclosure({clos with fu_closure},d)
+  | Fselect_closure(clos,d) ->
+      let acc, set_of_closures = f acc Variable.Set.empty clos.set_of_closures in
+      acc, Fselect_closure({clos with set_of_closures},d)
 
   | Fvar_within_closure(clos,d) ->
-      let acc, vc_closure = f acc Variable.Set.empty clos.vc_closure in
-      acc, Fvar_within_closure({clos with vc_closure},d)
+      let acc, closure = f acc Variable.Set.empty clos.closure in
+      acc, Fvar_within_closure({clos with closure},d)
 
   | ( Fsymbol _
     | Fvar _
@@ -446,7 +460,8 @@ let fold_subexpressions f acc = function
     | Funreachable _) as e ->
       acc, e
 
-let subexpression_bound_variables = function
+let subexpression_bound_variables (flam : _ Flambda.t) =
+  match flam with
   | Ftrywith(body,id,handler,_) ->
       [Variable.Set.singleton id, handler;
        Variable.Set.empty, body]
@@ -464,14 +479,14 @@ let subexpression_bound_variables = function
   | Fstaticcatch (_,ids,body,handler,_) ->
       [Variable.Set.empty, body;
        Variable.Set.of_list ids, handler]
-  | Fset_of_closures ({ cl_fun; cl_free_var },_) ->
+  | Fset_of_closures ({ function_decls; free_vars },_) ->
       let free_vars =
         List.map (fun (_, def) -> Variable.Set.empty, def)
-          (Variable.Map.bindings cl_free_var) in
+          (Variable.Map.bindings free_vars) in
       let funs =
-        List.map (fun (_, fun_def) ->
+        List.map (fun (_, (fun_def : _ Flambda.function_declaration)) ->
             fun_def.free_variables, fun_def.body)
-          (Variable.Map.bindings cl_fun.funs)in
+          (Variable.Map.bindings function_decls.funs)in
       funs @ free_vars
   | e ->
       List.map (fun s -> Variable.Set.empty, s) (subexpressions e)
@@ -481,11 +496,12 @@ let free_variables tree =
   let bound = ref Variable.Set.empty in
   let add id =
     if not (Variable.Set.mem id !free) then free := Variable.Set.add id !free in
-  let aux = function
+  let aux (flam : _ Flambda.t) =
+    match flam with
     | Fvar (id,_) -> add id
     | Fassign (id,_,_) -> add id
-    | Fset_of_closures ({cl_specialised_arg},_) ->
-        Variable.Map.iter (fun _ id -> add id) cl_specialised_arg
+    | Fset_of_closures ({specialised_args},_) ->
+        Variable.Map.iter (fun _ id -> add id) specialised_args
     | Ftrywith(_,id,_,_)
     | Ffor(id, _, _, _, _, _)
     | Flet ( _, id, _, _,_) ->
@@ -500,6 +516,7 @@ let free_variables tree =
   Variable.Set.diff !free !bound
 
 let rec fold_return_sites f acc tree =
+  let open Flambda in
   let aux (acc, list) (i, flam) =
     let (acc, flam') = fold_return_sites f acc flam in
     (acc, (i, flam') :: list)
@@ -511,7 +528,7 @@ let rec fold_return_sites f acc tree =
   | Fstaticraise _
   | Fapply _
   | Fset_of_closures _
-  | Fclosure _
+  | Fselect_closure _
   | Fvar_within_closure _
   | Fwhile _
   | Ffor _
@@ -534,17 +551,17 @@ let rec fold_return_sites f acc tree =
     (acc, Fifthenelse(cond, body_then', body_else', d))
 
   | Fswitch(arg, sw, d) ->
-    let (acc, fs_consts') = List.fold_left aux (acc, []) sw.fs_consts in
-    let (acc, fs_blocks') = List.fold_left aux (acc, []) sw.fs_blocks in
-    let (acc, fs_failaction') = match sw.fs_failaction with
+    let (acc, consts') = List.fold_left aux (acc, []) sw.consts in
+    let (acc, blocks') = List.fold_left aux (acc, []) sw.blocks in
+    let (acc, failaction') = match sw.failaction with
       | Some(flam) ->
         let (acc, flam') = fold_return_sites f acc flam in
         (acc, Some(flam'))
       | None -> (acc, None)
     in
-    (acc, Fswitch(arg, {sw with fs_consts = fs_consts';
-                                fs_blocks = fs_blocks';
-                                fs_failaction = fs_failaction'},
+    (acc, Fswitch(arg, {sw with consts = consts';
+                                blocks = blocks';
+                                failaction = failaction'},
                   d))
 
   | Fstringswitch(arg, sw, def, v) ->
@@ -571,8 +588,9 @@ let rec fold_return_sites f acc tree =
     let (acc, handler') = fold_return_sites f acc handler in
     (acc, Fstaticcatch(exn, ids, body', handler', d))
 
-let map_data (type t1) (type t2) (f:t1 -> t2) (tree:t1 flambda) : t2 flambda =
-  let rec mapper : t1 flambda -> t2 flambda = function
+let map_data (type t1) (type t2) (f:t1 -> t2)
+      (tree:t1 Flambda.t) : t2 Flambda.t =
+  let rec mapper : t1 Flambda.t -> t2 Flambda.t = function
     | Fsymbol (sym, v) -> Fsymbol (sym, f v)
     | Fvar (id, v) -> Fvar (id, f v)
     | Fconst (cst, v) -> Fconst (cst, f v)
@@ -581,31 +599,32 @@ let map_data (type t1) (type t2) (f:t1 -> t2) (tree:t1 flambda) : t2 flambda =
     | Fletrec(defs, body, v) ->
         let defs = List.map (fun (id,def) -> (id, mapper def)) defs in
         Fletrec( defs, mapper body, f v)
-    | Fapply ({ ap_function; ap_arg; } as ap, v) ->
-        Fapply ({ ap with ap_function = mapper ap_function;
-                          ap_arg = list_mapper ap_arg; },
-                f v)
-    | Fset_of_closures ({ cl_fun; cl_free_var;
-                  cl_specialised_arg }, v) ->
-        let cl_fun =
-          { cl_fun with
+    | Fapply ({ func; args; kind; dbg; return_arity }, v) ->
+        Fapply ({ func = mapper func;
+                  args = list_mapper args;
+                  kind; dbg; return_arity }, f v)
+    | Fset_of_closures ({ function_decls; free_vars;
+                  specialised_args }, v) ->
+        let function_decls =
+          { function_decls with
             funs = Variable.Map.map
-                (fun ffun -> { ffun with body = mapper ffun.body })
-                cl_fun.funs } in
-        Fset_of_closures ({ cl_fun;
-                    cl_free_var = Variable.Map.map mapper cl_free_var;
-                    cl_specialised_arg }, f v)
-    | Fclosure ({ fu_closure; fu_fun; fu_relative_to}, v) ->
-        Fclosure ({ fu_closure = mapper fu_closure;
-                     fu_fun; fu_relative_to}, f v)
+                (fun (ffun : _ Flambda.function_declaration) ->
+                  { ffun with body = mapper ffun.body })
+                function_decls.funs } in
+        Fset_of_closures ({ function_decls;
+                    free_vars = Variable.Map.map mapper free_vars;
+                    specialised_args }, f v)
+    | Fselect_closure ({ set_of_closures; closure_id; relative_to}, v) ->
+        Fselect_closure ({ set_of_closures = mapper set_of_closures;
+                     closure_id; relative_to}, f v)
     | Fvar_within_closure (vc, v) ->
-        Fvar_within_closure ({ vc with vc_closure = mapper vc.vc_closure }, f v)
+        Fvar_within_closure ({ vc with closure = mapper vc.closure }, f v)
     | Fswitch(arg, sw, v) ->
         let aux l = List.map (fun (i,v) -> i, mapper v) l in
         let sw = { sw with
-                   fs_consts = aux sw.fs_consts;
-                   fs_blocks = aux sw.fs_blocks;
-                   fs_failaction = Misc.may_map mapper sw.fs_failaction } in
+                   consts = aux sw.consts;
+                   blocks = aux sw.blocks;
+                   failaction = Misc.may_map mapper sw.failaction } in
         Fswitch(mapper arg, sw, f v)
     | Fstringswitch (arg, sw, def, v) ->
         let sw = List.map (fun (i,v) -> i, mapper v) sw in

@@ -42,12 +42,11 @@ val new_subst_ids' :
   Variable.t list ->
   Variable.t list * t
 
-val subst_var : t -> Variable.t -> Variable.t
 (** [subst_var subst var] apply the substitution [subst] to [var].
     If no substitution is registered for [var] it is returned unchanged. *)
+val subst_var : t -> Variable.t -> Variable.t
 
 val freshen_var : Variable.t -> Variable.t
-val subst_var : t -> Variable.t -> Variable.t
 
 val rewrite_recursive_calls_with_symbols
    : t
@@ -64,7 +63,7 @@ val rewrite_recursive_calls_with_symbols
 
 module Alpha_renaming_map_for_ids_and_bound_vars_of_closures : sig
   (* Tables used for identifiers substitution in
-     Fclosure ("ids of closures") and Fvar_within_closure ("bound vars
+     Fselect_closure ("ids of closures") and Fvar_within_closure ("bound vars
      of closures") constructions.
      This information is propagated bottom up. This is
      populated when inlining a function containing a closure
@@ -74,7 +73,7 @@ module Alpha_renaming_map_for_ids_and_bound_vars_of_closures : sig
        [let f x =
           let g y = ... x ... in
           ... g.x ...           (Fvar_within_closure x)
-          ... g 1 ...           (FApply (Fclosure g ...))
+          ... g 1 ...           (FApply (Fselect_closure g ...))
           ]
      if f is inlined g is renamed. The approximation of g will
      cary this table such that later the access to the field x
@@ -99,5 +98,5 @@ end
 
 val toplevel_substitution
    : Variable.t Variable.Map.t
-  -> 'a Flambda.flambda
-  -> 'a Flambda.flambda
+  -> 'a Flambda.t
+  -> 'a Flambda.t

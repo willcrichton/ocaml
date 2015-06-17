@@ -23,22 +23,21 @@ let rec lam ppf = function
       Variable.print ppf id
   | Fconst (cst,_) ->
       const ppf cst
-  | Fapply({ap_function; ap_arg; ap_kind; ap_return_arity},_) ->
+  | Fapply({func; args; kind; return_arity},_) ->
       let lams ppf largs =
-        List.iter (fun l -> fprintf ppf "@ %a [%d]" lam l ap_return_arity) largs in
-      let direct = match ap_kind with
-          Indirect -> "" | Direct _ -> "*"
-      in
-      fprintf ppf "@[<2>(apply%s@ %a%a)@]" direct lam ap_function lams ap_arg
-  | Fclosure({fu_closure;fu_fun;fu_relative_to = None},_) ->
-      fprintf ppf "@[<2>(function@ %a@ %a)@]" Closure_id.print fu_fun lam fu_closure
-  | Fclosure({fu_closure;fu_fun;fu_relative_to = Some rel},_) ->
-      fprintf ppf "@[<2>(function_relative@ %a - %a@ %a)@]"
-        Closure_id.print fu_fun Closure_id.print rel lam fu_closure
-  | Fvar_within_closure({vc_closure;vc_fun;vc_var},_) ->
+        List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in
+      let direct = match kind with Indirect -> "" | Direct _ -> "*" in
+      fprintf ppf "@[<2>(apply%s@ %a%a [%d])@]" direct lam func lams args return_arity
+  | Fselect_closure({set_of_closures;closure_id;relative_to = None},_) ->
+      fprintf ppf "@[<2>(closure@ %a@ %a)@]" Closure_id.print closure_id
+        lam set_of_closures
+  | Fselect_closure({set_of_closures;closure_id;relative_to = Some rel},_) ->
+      fprintf ppf "@[<2>(closure_relative@ %a - %a@ %a)@]"
+        Closure_id.print closure_id Closure_id.print rel lam set_of_closures
+  | Fvar_within_closure({closure;closure_id;var},_) ->
       fprintf ppf "@[<2>(var@ %a@ %a@ %a)@]"
-        Var_within_closure.print vc_var Closure_id.print vc_fun lam vc_closure
-  | Fset_of_closures({cl_fun;cl_free_var;cl_specialised_arg},_) ->
+        Var_within_closure.print var Closure_id.print closure_id lam closure
+  | Fset_of_closures({function_decls;free_vars;specialised_args},_) ->
       let idents ppf =
         List.iter (fprintf ppf "@ %a" Variable.print) in
       let funs ppf =
@@ -57,14 +56,14 @@ let rec lam ppf = function
             spec_args
         end
       in
-      fprintf ppf "@[<2>(closure%a %a%a)@]" funs cl_fun.funs lams
-        cl_free_var spec cl_specialised_arg
-  | Flet(str, id, arg, body,_) ->
+      fprintf ppf "@[<2>(set_of_closures%a %a%a)@]" funs function_decls.funs lams
+        free_vars spec specialised_args
+  | Flet(_str, id, arg, body,_) ->
       let rec letbody ul = match ul with
         | Flet(str, id, arg, body,_) ->
             let str = match str with
-              | Assigned -> "*"
-              | Not_assigned -> ""
+              | Mutable -> "*"
+              | Immutable -> ""
             in
             fprintf ppf "@ @[<2>%a%s@ %a@]" Variable.print id str lam arg;
             letbody body
@@ -93,13 +92,13 @@ let rec lam ppf = function
           (fun (n, l) ->
              if !spc then fprintf ppf "@ " else spc := true;
              fprintf ppf "@[<hv 1>case int %i:@ %a@]" n lam l)
-          sw.fs_consts;
+          sw.consts;
         List.iter
           (fun (n, l) ->
              if !spc then fprintf ppf "@ " else spc := true;
              fprintf ppf "@[<hv 1>case tag %i:@ %a@]" n lam l)
-          sw.fs_blocks ;
-        begin match sw.fs_failaction with
+          sw.blocks ;
+        begin match sw.failaction with
         | None  -> ()
         | Some l ->
             if !spc then fprintf ppf "@ " else spc := true;
@@ -107,9 +106,9 @@ let rec lam ppf = function
         end in
       fprintf ppf
         "@[<1>(%s(%i,%i) %a@ @[<v 0>%a@])@]"
-        (match sw.fs_failaction with None -> "switch*" | _ -> "switch")
-        (Int.Set.cardinal sw.fs_numconsts)
-        (Int.Set.cardinal sw.fs_numblocks)
+        (match sw.failaction with None -> "switch*" | _ -> "switch")
+        (Int.Set.cardinal sw.numconsts)
+        (Int.Set.cardinal sw.numblocks)
         lam larg switch sw
   | Fstringswitch(arg, cases, default, _) ->
       let switch ppf cases =

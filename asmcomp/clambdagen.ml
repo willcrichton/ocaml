@@ -27,13 +27,13 @@ type ('a,'b) declaration_position =
 let list_closures expr constants =
   let closures = ref Closure_id.Map.empty in
   let aux expr = match expr with
-    | Fset_of_closures({ cl_fun = functs; cl_free_var = fv }, data) ->
+    | Fset_of_closures ({ function_decls = functs; }, _) ->
         let add off_id _ map =
           Closure_id.Map.add
             (Closure_id.wrap off_id)
             functs map in
         closures := Variable.Map.fold add functs.funs !closures;
-    | e -> ()
+    | _ -> ()
   in
   Flambdaiter.iter aux expr;
   SymbolMap.iter (fun _ flam -> Flambdaiter.iter aux flam) constants;
@@ -43,15 +43,15 @@ let reexported_offset extern_fun_offset_table extern_fv_offset_table expr consta
   let set_fun = ref Closure_id.Set.empty in
   let set_fv = ref Var_within_closure.Set.empty in
   let aux expr = match expr with
-    | Fvar_within_closure({vc_var = env_var; vc_fun = env_fun_id}, _) ->
+    | Fvar_within_closure({var = env_var; closure_id = env_fun_id}, _) ->
         set_fun := Closure_id.Set.add env_fun_id !set_fun;
         set_fv := Var_within_closure.Set.add env_var !set_fv;
-    | Fclosure({fu_fun = id; fu_relative_to = rel}, _) ->
+    | Fselect_closure({closure_id = id; relative_to = rel}, _) ->
         let set = match rel with
           | None -> !set_fun
           | Some rel -> Closure_id.Set.add rel !set_fun in
         set_fun := Closure_id.Set.add id set;
-    | e -> ()
+    | _ -> ()
   in
   Flambdaiter.iter aux expr;
   SymbolMap.iter (fun _ flam -> Flambdaiter.iter aux flam) constants;
@@ -79,8 +79,8 @@ let structured_constant_label expected_symbol ~shared cst =
 
 module type Param1 = sig
   type t
-  val expr : t flambda
-  val constants : t flambda SymbolMap.t
+  val expr : t Flambda.t
+  val constants : t Flambda.t SymbolMap.t
 end
 
 module Offsets(P:Param1) = struct
@@ -88,7 +88,7 @@ module Offsets(P:Param1) = struct
   module Storer =
     Switch.Store
       (struct
-        type t = P.t flambda
+        type t = P.t Flambda.t
         type key = Flambdautils.sharing_key
         let make_key = Flambdautils.make_key
       end)
@@ -101,7 +101,7 @@ module Offsets(P:Param1) = struct
   let fv_offset_table = ref Var_within_closure.Map.empty
 
   let rec iter = function
-    | Fset_of_closures({cl_fun = funct; cl_free_var = fv}, _) ->
+    | Fset_of_closures({function_decls = funct; free_vars = fv}, _) ->
         iter_closure funct fv
     | _ -> ()
 
@@ -168,7 +168,7 @@ module Conv(P:Param2) = struct
   module Storer =
     Switch.Store
       (struct
-        type t = P.t flambda
+        type t = P.t Flambda.t
         type key = Flambdautils.sharing_key
         let make_key = Flambdautils.make_key
       end)
@@ -177,7 +177,6 @@ module Conv(P:Param2) = struct
      inside a closure *)
   let fun_offset_table = P.fun_offset_table
   let fv_offset_table = P.fv_offset_table
-  let closures = P.closures
 
   (* offsets of functions and free variables in closures comming from
      a linked module *)
@@ -191,9 +190,6 @@ module Conv(P:Param2) = struct
     (Compilenv.approx_env ()).Flambdaexport.ex_functions
   let ex_constant_closures =
     (Compilenv.approx_env ()).Flambdaexport.ex_constant_closures
-
-  let is_current_unit unit =
-    Compilation_unit.equal (Compilenv.current_unit ()) unit
 
   let get_fun_offset off =
     try
@@ -228,20 +224,20 @@ module Conv(P:Param2) = struct
 
   let is_function_constant cf =
     match function_declaration_position cf with
-    | Local { ident } ->
-        Set_of_closures_id.Set.mem ident P.constant_closures
-    | External { ident } ->
-        Set_of_closures_id.Set.mem ident ex_constant_closures
+    | Local { set_of_closures_id } ->
+        Set_of_closures_id.Set.mem set_of_closures_id P.constant_closures
+    | External { set_of_closures_id } ->
+        Set_of_closures_id.Set.mem set_of_closures_id ex_constant_closures
     | Not_declared ->
         fatal_error (Format.asprintf "missing closure %a"
                        Closure_id.print cf)
 
   let is_closure_constant fid =
     match functions_declaration_position fid with
-    | Local { ident } ->
-        Set_of_closures_id.Set.mem ident P.constant_closures
-    | External { ident } ->
-        Set_of_closures_id.Set.mem ident ex_constant_closures
+    | Local { set_of_closures_id } ->
+        Set_of_closures_id.Set.mem set_of_closures_id P.constant_closures
+    | External { set_of_closures_id } ->
+        Set_of_closures_id.Set.mem set_of_closures_id ex_constant_closures
     | Not_declared ->
         fatal_error (Format.asprintf "missing closure %a"
                        Set_of_closures_id.print fid)
@@ -291,7 +287,7 @@ module Conv(P:Param2) = struct
     | Fconst (cst,_) ->
         Uconst (conv_const expected_symbol cst)
 
-    | Flet(str, var, lam, body, _) ->
+    | Flet (_, var, lam, body, _) ->
         let id, env_body = add_unique_ident var env in
         Ulet(id, conv env lam, conv env_body body)
 
@@ -302,10 +298,10 @@ module Conv(P:Param2) = struct
         let udefs = List.map (fun (id,def) -> id, conv env def) defs in
         Uletrec(udefs, conv env body)
 
-    | Fset_of_closures({ cl_fun = funct; cl_free_var = fv }, _) ->
+    | Fset_of_closures({ function_decls = funct; free_vars = fv }, _) ->
         conv_closure env ~expected_symbol funct fv
 
-    | Fclosure({ fu_closure = lam; fu_fun = id; fu_relative_to = rel }, _) ->
+    | Fselect_closure({ set_of_closures = lam; closure_id = id; relative_to = rel }, _) ->
         let ulam = conv env lam in
         let offset = get_fun_offset id in
         let relative_offset = match rel with
@@ -318,19 +314,17 @@ module Conv(P:Param2) = struct
            that a closure is not offseted (Cmmgen.expr_size) *)
         else Uoffset(ulam, relative_offset)
 
-    | Fvar_within_closure({vc_closure = lam;vc_var = env_var;vc_fun = env_fun_id}, _) ->
+    | Fvar_within_closure({closure = lam;var = env_var;closure_id = env_fun_id}, _) ->
         let ulam = conv env lam in
         let fun_offset = get_fun_offset env_fun_id in
         let var_offset = get_fv_offset env_var in
         let pos = var_offset - fun_offset in
         Uprim(Pfield pos, [ulam], Debuginfo.none)
 
-    | Fapply({ ap_function = funct; ap_arg = args; ap_return_arity = return_arity;
-               ap_kind = Direct direct_func; ap_dbg = dbg }, _) ->
+    | Fapply({ func = funct; args; kind = Direct direct_func; return_arity; dbg = dbg }, _) ->
         conv_direct_apply (conv env funct) args direct_func return_arity dbg env
 
-    | Fapply({ ap_function = funct; ap_arg = args;
-               ap_kind = Indirect; ap_dbg = dbg }, _) ->
+    | Fapply({ func = funct; args; kind = Indirect; dbg = dbg }, _) ->
         (* the closure parameter of the function is added by cmmgen, but
            it already appears in the list of parameters of the clambda
            function for generic calls. Notice that for direct calls it is
@@ -340,9 +334,9 @@ module Conv(P:Param2) = struct
     | Fswitch(arg, sw, d) ->
         let aux () =
           let const_index, const_actions =
-            conv_switch env sw.fs_consts sw.fs_numconsts sw.fs_failaction
+            conv_switch env sw.consts sw.numconsts sw.failaction
           and block_index, block_actions =
-            conv_switch env sw.fs_blocks sw.fs_numblocks sw.fs_failaction in
+            conv_switch env sw.blocks sw.numblocks sw.failaction in
           Uswitch(conv env arg,
                   {us_index_consts = const_index;
                    us_actions_consts = const_actions;
@@ -357,26 +351,26 @@ module Conv(P:Param2) = struct
         (* Check that failaction is effectively copiable: i.e. it
            can't declare symbols. If it is not the case, share it
            through a staticraise/staticcatch *)
-        begin match sw.fs_failaction with
+        begin match sw.failaction with
         | None -> aux ()
         | Some (Fstaticraise (_,args,_))
           when List.for_all simple_expr args -> aux ()
         | Some failaction ->
-            let exn = Static_exception.create () in
-            let fs_failaction = Some (Fstaticraise(exn,[], d)) in
-            let sw = { sw with fs_failaction } in
-            let expr =
-              Fstaticcatch(exn, [], Fswitch(arg, sw, d), failaction, d) in
-            conv env expr
+          let exn = Static_exception.create () in
+          let sw = { sw with failaction = Some (Fstaticraise (exn, [], d)) } in
+          let expr =
+            Fstaticcatch(exn, [], Fswitch(arg, sw, d), failaction, d)
+          in
+          conv env expr
         end
 
-    | Fstringswitch(arg, sw, def, d) ->
+    | Fstringswitch(arg, sw, def, _) ->
         let arg = conv env arg in
         let sw = List.map (fun (s, e) -> s, conv env e) sw in
         let def = Misc.may_map (conv env) def in
         Ustringswitch(arg, sw, def)
 
-    | Fprim(Pgetglobal id, l, dbg, _) ->
+    | Fprim(Pgetglobal _, _, _, _) ->
         assert false
 
     | Fprim(Pgetglobalfield(id,i), l, dbg, _) ->
@@ -545,7 +539,7 @@ module Conv(P:Param2) = struct
 
     let funct = Variable.Map.bindings functs.funs in
     let fv = Variable.Map.bindings fv in
-    let closed = is_closure_constant functs.ident in
+    let closed = is_closure_constant functs.set_of_closures_id in
 
     (* the environment variable used for non constant closures *)
     let env_var = Ident.create "env" in
@@ -646,7 +640,7 @@ module Conv(P:Param2) = struct
         str ~shared:true (Uconst_int64 x)
     | Fconst_base (Const_nativeint x) ->
         str ~shared:true (Uconst_nativeint x)
-    | Fconst_base (Const_string (s,o)) ->
+    | Fconst_base (Const_string (s, _)) ->
         str ~shared:false (Uconst_string s)
     | Fconst_float_array c ->
         (* constant float arrays are really immutable *)
@@ -736,8 +730,8 @@ module Conv(P:Param2) = struct
 end
 
 let convert (type a)
-    ((expr:a flambda),
-     (constants:a flambda SymbolMap.t),
+    ((expr:a Flambda.t),
+     (constants:a Flambda.t SymbolMap.t),
      exported) =
   let closures = list_closures expr constants in
   let module P1 = struct
@@ -769,8 +763,7 @@ let convert (type a)
       ex_offset_fv = add_ext_offset_fv fv_offset_table }
   in
   Compilenv.set_export_info export;
-  SymbolMap.iter
-    (fun sym cst ->
+  SymbolMap.iter (fun sym _cst ->
        let lbl = string_of_linkage_name sym.sym_label in
        Compilenv.add_exported_constant lbl)
     C.constants;

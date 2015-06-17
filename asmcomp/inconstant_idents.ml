@@ -60,7 +60,7 @@ type constant_result = {
 
 module type Param = sig
   type t
-  val expr : t Flambda.flambda
+  val expr : t Flambda.t
   val for_clambda : bool
   val compilation_unit : Compilation_unit.t
   val toplevel : bool
@@ -131,7 +131,7 @@ module NotConstants(P:Param) = struct
   let rec mark_loop ~toplevel (curr:dep list) = function
 
     | Flet(str, id, lam, body, _) ->
-      if str = Assigned then mark_curr [Var id];
+      if str = Mutable then mark_curr [Var id];
       mark_loop ~toplevel [Var id] lam;
       (* adds 'id in NC => curr in NC'
          This is not really necessary, but compiling this correctly is
@@ -150,22 +150,22 @@ module NotConstants(P:Param) = struct
       (* adds 'id in NC => curr in NC' *)
       register_implication ~in_nc:(Var id) ~implies_in_nc:curr
 
-    | Fset_of_closures ({ cl_fun = funcs ; cl_free_var = fv; cl_specialised_arg },_) ->
+    | Fset_of_closures ({ function_decls = funcs ; free_vars = fv; specialised_args },_) ->
 
       (* If a function in the closure is specialised, do not consider
          it constant *)
       Variable.Map.iter (fun _ id ->
             register_implication
               ~in_nc:(Var id)
-              ~implies_in_nc:[Closure funcs.ident]) cl_specialised_arg;
+              ~implies_in_nc:[Closure funcs.set_of_closures_id]) specialised_args;
       (* adds 'funcs in NC => curr in NC' *)
-      register_implication ~in_nc:(Closure funcs.ident) ~implies_in_nc:curr;
+      register_implication ~in_nc:(Closure funcs.set_of_closures_id) ~implies_in_nc:curr;
       (* a closure is constant if its free variables are constants. *)
       Variable.Map.iter (fun inner_id lam ->
-        mark_loop ~toplevel [Closure funcs.ident; Var inner_id] lam) fv;
+        mark_loop ~toplevel [Closure funcs.set_of_closures_id; Var inner_id] lam) fv;
       Variable.Map.iter (fun fun_id ffunc ->
         (* for each function f in a closure c 'c in NC => f' *)
-        register_implication ~in_nc:(Closure funcs.ident) ~implies_in_nc:[Var fun_id];
+        register_implication ~in_nc:(Closure funcs.set_of_closures_id) ~implies_in_nc:[Var fun_id];
         (* function parameters are in NC *)
         List.iter (fun id -> mark_curr [Var id]) ffunc.params;
         mark_loop ~toplevel:false [] ffunc.body) funcs.funs
@@ -212,12 +212,12 @@ module NotConstants(P:Param) = struct
       List.iter (mark_loop ~toplevel curr) args
 *)
 
-    | Fclosure ({fu_closure; fu_fun; _}, _) ->
-      if Closure_id.in_compilation_unit compilation_unit fu_fun
-      then mark_loop ~toplevel curr fu_closure
+    | Fselect_closure ({set_of_closures; closure_id; _}, _) ->
+      if Closure_id.in_compilation_unit compilation_unit closure_id
+      then mark_loop ~toplevel curr set_of_closures
       else mark_curr curr
 
-    | Fvar_within_closure ({vc_closure = f1; _},_)
+    | Fvar_within_closure ({closure = f1; _},_)
     | Fprim(Lambda.Pfield _, [f1], _, _) ->
       if for_clambda
       then mark_curr curr;
@@ -298,7 +298,7 @@ module NotConstants(P:Param) = struct
       mark_curr curr;
       List.iter (mark_loop ~toplevel []) l
 
-    | Fapply ({ap_function = f1; ap_arg = fl; _ },_) ->
+    | Fapply ({func = f1; args = fl; _ },_) ->
       mark_curr curr;
       mark_loop ~toplevel [] f1;
       List.iter (mark_loop ~toplevel []) fl
@@ -306,9 +306,9 @@ module NotConstants(P:Param) = struct
     | Fswitch (arg,sw,_) ->
       mark_curr curr;
       mark_loop ~toplevel [] arg;
-      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw.fs_consts;
-      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw.fs_blocks;
-      Misc.may (fun l -> mark_loop ~toplevel [] l) sw.fs_failaction
+      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw.consts;
+      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw.blocks;
+      Misc.may (fun l -> mark_loop ~toplevel [] l) sw.failaction
 
     | Fstringswitch (arg,sw,def,_) ->
       mark_curr curr;
@@ -362,7 +362,7 @@ module NotConstants(P:Param) = struct
 end
 
 let not_constants (type a) ~for_clambda ~compilation_unit
-    (expr:a Flambda.flambda) =
+    (expr:a Flambda.t) =
   let module P = struct
     type t = a
     let expr = expr

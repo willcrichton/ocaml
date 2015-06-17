@@ -218,6 +218,10 @@ let read_one_param ppf position name v =
       if !native_code then
         set "functor-heuristics" [ functor_heuristics ] v
 
+  | "inlining-stats" ->
+      if !native_code then
+        set "inlining-stats" [ inlining_stats ] v
+
   | "intf-suffix" -> Config.interface_suffix := v
 
   | "I" -> begin
@@ -321,7 +325,7 @@ type file_option = {
 }
 
 let scan_line ic =
-  Scanf.bscanf ic "%[0-9a-zA-Z_.*] : %[a-zA-Z_] = %s "
+  Scanf.bscanf ic "%[0-9a-zA-Z_.*] : %[a-zA-Z_-] = %s "
     (fun pattern name value ->
        let pattern =
          match pattern with

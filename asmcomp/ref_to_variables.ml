@@ -30,7 +30,7 @@ let directly_used_variables tree =
     | Fprim(Psetfield(_, _), [Fvar _; e], _, _) ->
         loop e
     | Fset_of_closures _ | Flet _ | Fassign _
-    | Fsymbol _ | Fconst _ | Fapply _ | Fclosure _
+    | Fsymbol _ | Fconst _ | Fapply _ | Fselect_closure _
     | Fvar_within_closure _ | Fletrec _
     | Fprim _ | Fswitch _ | Fstringswitch _ | Fstaticraise _
     | Fstaticcatch _ | Ftrywith _ | Fifthenelse _ | Fsequence _
@@ -42,18 +42,13 @@ let directly_used_variables tree =
 let variables_containing_ref lam =
   let map = ref Variable.Map.empty in
   let aux = function
-    | Flet(Not_assigned, v,
+    | Flet(Immutable, v,
            Fprim(Pmakeblock(0, Asttypes.Mutable), l, _, _), _, _) ->
         map := Variable.Map.add v (List.length l) !map
     | _ -> ()
   in
   Flambdaiter.iter aux lam;
   !map
-
-let rec interval x y =
-  if x > y
-  then []
-  else x :: (interval (x+1) y)
 
 let eliminate_ref lam =
   let directly_used_variables = directly_used_variables lam in
@@ -63,7 +58,7 @@ let eliminate_ref lam =
       (variables_containing_ref lam)
   in
   let convertible_variables =
-    Variable.Map.mapi (fun v size -> Array.init size (fun i -> rename_var v))
+    Variable.Map.mapi (fun v size -> Array.init size (fun _ -> rename_var v))
       convertible_variables in
   let convertible_variable v = Variable.Map.mem v convertible_variables in
 
@@ -76,8 +71,8 @@ let eliminate_ref lam =
   in
 
   let aux = function
-    | Flet(Not_assigned, v,
-           Fprim(Pmakeblock(0, Asttypes.Mutable), inits, dbg, d1), body, d2)
+    | Flet(Immutable, v,
+           Fprim(Pmakeblock(0, Asttypes.Mutable), inits, _, _), body, _)
       when convertible_variable v ->
         let _, expr =
           List.fold_left (fun (field,body) init ->
@@ -85,7 +80,7 @@ let eliminate_ref lam =
               | None -> assert false
               | Some (var, _) ->
                   field+1,
-                  Flet(Assigned, var, init, body, Expr_id.create ()))
+                  Flet(Mutable, var, init, body, Expr_id.create ()))
             (0,body) inits in
         expr
     | Fprim(Pfield field, [Fvar (v,d)], _, _)
@@ -103,14 +98,14 @@ let eliminate_ref lam =
               Fassign(var, Fprim(Poffsetint delta, [Fvar (var,d1)], dbg, d2),
                       Expr_id.create ())
             else Funreachable d1)
-    | Fprim(Psetfield(field, _), [Fvar (v,d1); e], dbg, d2)
+    | Fprim(Psetfield(field, _), [Fvar (v,d1); e], _, d2)
       when convertible_variable v ->
         (match get_variable v field with
          | None -> Funreachable d1
          | Some (var,_) -> Fassign(var, e, d2))
     | Fset_of_closures _ | Flet _
     | Fassign _ | Fvar _
-    | Fsymbol _ | Fconst _ | Fapply _ | Fclosure _
+    | Fsymbol _ | Fconst _ | Fapply _ | Fselect_closure _
     | Fvar_within_closure _ | Fletrec _
     | Fprim _ | Fswitch _ | Fstringswitch _
     | Fstaticraise _ | Fstaticcatch _

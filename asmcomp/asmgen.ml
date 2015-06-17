@@ -113,7 +113,7 @@ let compile_genfuns ppf f =
 let flambda ppf (size, exported, lam) =
   let current_compilation_unit = Compilenv.current_unit () in
   let dump_and_check s flam =
-    if !Clflags.dump_flambda && false
+    if !Clflags.dump_flambda
     then Format.fprintf ppf "%s:@ %a@." s Printflambda.flambda flam;
     try Flambdacheck.check ~current_compilation_unit flam
     with e ->
@@ -141,7 +141,7 @@ let flambda ppf (size, exported, lam) =
       let flam = Inlining.inline ~never_inline:true flam in
       let flam = Flambdasimplify.unbox_returns flam in
       let flam = Flambdasimplify.remove_unused_closure_variables flam in
-      let flam = Flambda_ref_to_variables.eliminate_ref flam in
+      let flam = Ref_to_variables.eliminate_ref flam in
       loop (rounds - 1) flam in
   let flam = loop !Clflags.simplify_rounds flam in
   dump_and_check "flambdasimplify" flam;
@@ -149,7 +149,7 @@ let flambda ppf (size, exported, lam) =
     Flambdasym.convert ~compilation_unit:current_compilation_unit flam in
   let fl,const,export = fl_sym in
   Compilenv.set_export_info export;
-  if !Clflags.dump_flambda && false
+  if !Clflags.dump_flambda
   then begin
     Format.fprintf ppf "flambdasym@ %a@." Printflambda.flambda fl;
     Symbol.SymbolMap.iter (fun sym lam ->

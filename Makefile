@@ -17,7 +17,7 @@ include stdlib/StdlibModules
 
 CAMLC=boot/ocamlrun boot/ocamlc -g -nostdlib -I boot
 CAMLOPT=boot/ocamlrun ./ocamlopt -g -nostdlib -I stdlib -I otherlibs/dynlink
-COMPFLAGS=-strict-sequence -w +33..39+48-40 -warn-error A -bin-annot \
+COMPFLAGS=-strict-sequence -w +33..39+48-40-30 -warn-error A -bin-annot \
           -safe-string $(INCLUDES)
 LINKFLAGS=
 
@@ -107,15 +107,17 @@ ASMCOMP=\
   asmcomp/symbol.cmo asmcomp/abstract_identifiers.cmo \
   asmcomp/flambdaiter.cmo \
   asmcomp/flambdasubst.cmo \
-  asmcomp/flambdautils.cmo asmcomp/printflambda.cmo \
+  asmcomp/flambdautils.cmo \
+  asmcomp/invariant_params.cmo \
+  asmcomp/printflambda.cmo \
   asmcomp/flambdacheck.cmo \
-  asmcomp/flambdaconstants.cmo \
+  asmcomp/inconstant_idents.cmo \
   asmcomp/closure_conversion.cmo \
   asmcomp/flambdaexport.cmo \
   asmcomp/compilenv.cmo \
-  asmcomp/flambdaeffects.cmo \
-  asmcomp/flambdaapprox.cmo \
-  asmcomp/flambdacost.cmo \
+  asmcomp/effect_analysis.cmo \
+  asmcomp/simple_value_approx.cmo \
+  asmcomp/inlining_cost.cmo \
   asmcomp/flambdasimplify.cmo \
   asmcomp/inlining_stats_types.cmo \
   asmcomp/inlining_stats.cmo \
@@ -123,7 +125,7 @@ ASMCOMP=\
   asmcomp/inlining_result.cmo \
   asmcomp/inlining_decision.cmo \
   asmcomp/inlining.cmo \
-  asmcomp/flambda_ref_to_variables.cmo \
+  asmcomp/ref_to_variables.cmo \
   asmcomp/flambdasym.cmo \
   asmcomp/clambdagen.cmo \
   asmcomp/strmatch.cmo asmcomp/cmmgen.cmo \
@@ -439,6 +441,7 @@ partialclean::
 
 ocamlc: compilerlibs/ocamlcommon.cma compilerlibs/ocamlbytecomp.cma $(BYTESTART)
 	$(CAMLC) $(LINKFLAGS) -compat-32 -o ocamlc \
+	   ${BISECT_CMA} \
 	   compilerlibs/ocamlcommon.cma compilerlibs/ocamlbytecomp.cma $(BYTESTART)
 
 # The native-code compiler
@@ -450,6 +453,7 @@ partialclean::
 
 ocamlopt: compilerlibs/ocamlcommon.cma compilerlibs/ocamloptcomp.cma $(OPTSTART)
 	$(CAMLC) $(LINKFLAGS) -o ocamlopt \
+	  ${BISECT_CMA} \
 	  compilerlibs/ocamlcommon.cma compilerlibs/ocamloptcomp.cma $(OPTSTART)
 
 partialclean::
@@ -465,6 +469,7 @@ partialclean::
 ocaml: compilerlibs/ocamlcommon.cma compilerlibs/ocamlbytecomp.cma \
        compilerlibs/ocamltoplevel.cma $(TOPLEVELSTART) expunge
 	$(CAMLC) $(LINKFLAGS) -linkall -o ocaml.tmp \
+	  ${BISECT_CMA} \
 	  compilerlibs/ocamlcommon.cma compilerlibs/ocamlbytecomp.cma \
 	  compilerlibs/ocamltoplevel.cma $(TOPLEVELSTART)
 	- $(CAMLRUN) ./expunge ocaml.tmp ocaml $(PERVASIVES)
@@ -559,6 +564,7 @@ partialclean::
 ocamlc.opt: compilerlibs/ocamlcommon.cmxa compilerlibs/ocamlbytecomp.cmxa \
             $(BYTESTART:.cmo=.cmx)
 	$(CAMLOPT) $(LINKFLAGS) -ccopt "$(BYTECCLINKOPTS)" -o ocamlc.opt \
+          ${BISECT_CMXA} \
 	  compilerlibs/ocamlcommon.cmxa compilerlibs/ocamlbytecomp.cmxa \
 	  $(BYTESTART:.cmo=.cmx) -cclib "$(BYTECCLIBS)"
 
@@ -575,6 +581,7 @@ partialclean::
 ocamlopt.opt: compilerlibs/ocamlcommon.cmxa compilerlibs/ocamloptcomp.cmxa \
               $(OPTSTART:.cmo=.cmx)
 	$(CAMLOPT) $(LINKFLAGS) -o ocamlopt.opt \
+	   ${BISECT_CMXA} \
 	   compilerlibs/ocamlcommon.cmxa compilerlibs/ocamloptcomp.cmxa \
 	   $(OPTSTART:.cmo=.cmx)
 
@@ -683,7 +690,8 @@ tools/cvt_emit: tools/cvt_emit.mll
 
 expunge: compilerlibs/ocamlcommon.cma compilerlibs/ocamlbytecomp.cma \
          toplevel/expunge.cmo
-	$(CAMLC) $(LINKFLAGS) -o expunge compilerlibs/ocamlcommon.cma \
+	$(CAMLC) $(LINKFLAGS) -o expunge \
+		 ${BISECT_CMA} compilerlibs/ocamlcommon.cma \
 	         compilerlibs/ocamlbytecomp.cma toplevel/expunge.cmo
 
 partialclean::
@@ -873,18 +881,20 @@ clean::
 .SUFFIXES: .ml .mli .cmo .cmi .cmx
 
 .ml.cmo:
-	$(CAMLC) $(COMPFLAGS) -c $<
+	$(CAMLC) $(COMPFLAGS) `./Compflags $@` ${PPX_BISECT} -c $<
 
 .mli.cmi:
-	$(CAMLC) $(COMPFLAGS) -c $<
+	$(CAMLC) $(COMPFLAGS) `./Compflags $@` -c $<
 
 .ml.cmx:
-	$(CAMLOPT) $(COMPFLAGS) -c $<
+	$(CAMLOPT) $(COMPFLAGS) `./Compflags $@` ${PPX_BISECT_OPT} -c $<
 
 partialclean::
 	for d in utils parsing typing bytecomp asmcomp driver toplevel tools; \
-	  do rm -f $$d/*.cm[ioxt] $$d/*.cmti $$d/*.annot $$d/*.[so] $$d/*~; done
+	  do rm -f $$d/*.cm[ioxtp] $$d/*.cmti $$d/*.annot $$d/*.[so] $$d/*~; done
 	rm -f *~
+	rm -f bisect*.out
+	rm -f asmcomp/*/*.cmp
 
 depend: beforedepend
 	(for d in utils parsing typing bytecomp asmcomp driver toplevel; \

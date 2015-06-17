@@ -1,6 +1,19 @@
+(**************************************************************************)
+(*                                                                        *)
+(*                                OCaml                                   *)
+(*                                                                        *)
+(*                       Pierre Chambart, OCamlPro                        *)
+(*                  Mark Shinwell, Jane Street Europe                     *)
+(*                                                                        *)
+(*   Copyright 2015 Institut National de Recherche en Informatique et     *)
+(*   en Automatique.  All rights reserved.  This file is distributed      *)
+(*   under the terms of the Q Public License version 1.0.                 *)
+(*                                                                        *)
+(**************************************************************************)
+
 open Abstract_identifiers
 
-module A = Flambdaapprox
+module A = Simple_value_approx
 module E = Inlining_env
 module R = Inlining_result
 module U = Flambdautils
@@ -17,20 +30,18 @@ let should_inline_function_known_to_be_recursive
       ~(clos : 'a Flambda.function_declarations)
       ~env ~(closure : A.value_set_of_closures) ~approxs ~unchanging_params =
   assert (List.length func.params = List.length approxs);
-  (not (E.inside_set_of_closures_declaration clos.ident env))
+  (not (E.inside_set_of_closures_declaration clos.set_of_closures_id env))
     && (not (Variable.Set.is_empty closure.unchanging_params))
     && Var_within_closure.Map.is_empty closure.bound_var (* closed *)
     && List.exists2 (fun id approx ->
           A.useful approx && Variable.Set.mem id unchanging_params)
         func.params approxs
 
-
 let inline_non_recursive
     ~inline_by_copying_function_body
     ~env ~r ~clos ~ funct ~fun_id
     ~(func : 'a Flambda.function_declaration)
     ~(record_decision : Inlining_stats_types.Decision.t -> unit)
-    ~inline_threshold
     ~direct_apply
     ~no_transformation
     ~probably_a_functor
@@ -39,7 +50,7 @@ let inline_non_recursive
   let body, r_inlined =
     (* We first try to inline that function preventing further inlining below *)
     inline_by_copying_function_body ~env
-      ~r:(R.set_inline_threshold (R.clear_benefit r) Flambdacost.Never_inline)
+      ~r:(R.set_inlining_threshold (R.clear_benefit r) Inlining_cost.Never_inline)
       ~clos ~lfunc:funct ~fun_id ~func ~args
   in
   let unconditionally_inline =
@@ -58,14 +69,13 @@ let inline_non_recursive
       true
     end else begin
       let wsb =
-        Flambdacost.Whether_sufficient_benefit.create
+        Inlining_cost.Whether_sufficient_benefit.create
           ~original:(fst (no_transformation()))
           body
           ~probably_a_functor
           (R.benefit r_inlined)
-          (Can_inline 0)
       in
-      if Flambdacost.Whether_sufficient_benefit.evaluate wsb then begin
+      if Inlining_cost.Whether_sufficient_benefit.evaluate wsb then begin
         record_decision (Inlined (Copying_body (Evaluated wsb)));
         true
       end else begin
@@ -77,7 +87,7 @@ let inline_non_recursive
   if keep_inlined_version then begin
     (* The function is sufficiently beneficial to be inlined by itself
        so we keep it and we continue for potential inlining below *)
-    let r = R.map_benefit r (Flambdacost.benefit_union (R.benefit r_inlined)) in
+    let r = R.map_benefit r (Inlining_cost.Benefit.(+) (R.benefit r_inlined)) in
     let body = Flambdasimplify.lift_lets body in
     let env =
       E.note_entering_closure env ~closure_id:fun_id
@@ -95,14 +105,13 @@ let inline_non_recursive
     in
     let keep_inlined_version =
       let wsb =
-        Flambdacost.Whether_sufficient_benefit.create
+        Inlining_cost.Whether_sufficient_benefit.create
           ~original:(fst (no_transformation()))
           body
           ~probably_a_functor
           (R.benefit r_inlined)
-          (Can_inline 0)
       in
-      if Flambdacost.Whether_sufficient_benefit.evaluate wsb then begin
+      if Inlining_cost.Whether_sufficient_benefit.evaluate wsb then begin
         record_decision (Inlined (Copying_body_with_subfunctions (Evaluated wsb)));
         true
       end else begin
@@ -111,7 +120,7 @@ let inline_non_recursive
       end
     in
     if keep_inlined_version then begin
-      body, R.map_benefit r_inlined (Flambdacost.benefit_union (R.benefit r))
+      body, R.map_benefit r_inlined (Inlining_cost.Benefit.(+) (R.benefit r))
     end
     else begin
       (* r_inlined contains an approximation that may be invalid for the
@@ -124,11 +133,10 @@ let inline_non_recursive
     end
   end
 
-
 let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
       ~(func : 'a Flambda.function_declaration)
-      ~(closure : Flambdaapprox.value_set_of_closures)
-      ~args_with_approxs ~ap_dbg ~eid
+      ~(closure : Simple_value_approx.value_set_of_closures)
+      ~args_with_approxs ~dbg ~eid
       ~inline_by_copying_function_body
       ~inline_by_copying_function_declaration
       ~loop =
@@ -137,13 +145,12 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
       E.inlining_stats_closure_stack (E.note_entering_closure env
           ~closure_id:fun_id ~where:Inlining_decision)
     in
-    Inlining_stats.record_decision ~closure_stack ~debuginfo:ap_dbg
+    Inlining_stats.record_decision ~closure_stack ~debuginfo:dbg
   in
   let args, approxs = args_with_approxs in
   let no_transformation () : _ Flambda.t * R.t =
-    Fapply ({ap_function = funct; ap_arg = args;
-             ap_kind = Direct fun_id; ap_dbg;
-             ap_return_arity = func.return_arity}, eid),
+    Fapply ({func = funct; args; kind = Direct fun_id;
+             dbg; return_arity = func.return_arity}, eid),
     R.set_approx r A.value_unknown
   in
   let max_level = 3 in
@@ -171,9 +178,9 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
      This is true if the function is directly an argument of the
      apply construction. *)
   let direct_apply = match funct with
-    | Fclosure ({ fu_closure = Fset_of_closures _ }, _) -> true
+    | Fselect_closure ({ set_of_closures = Fset_of_closures _ }, _) -> true
     | _ -> false in
-  let inline_threshold = R.inline_threshold r in
+  let inlining_threshold = R.inlining_threshold r in
   let fun_var = U.find_declaration_variable fun_id clos in
   let recursive = Variable.Set.mem fun_var (U.recursive_functions clos) in
   let probably_a_functor = is_probably_a_functor env clos approxs in
@@ -215,9 +222,9 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
            To correct that, the threshold should be propagated through [r]
            rather than [env]
       *)
-      inline_threshold
+      inlining_threshold
     else
-      Flambdacost.can_try_inlining func.body inline_threshold
+      Inlining_cost.can_try_inlining func.body inlining_threshold
         ~bonus:num_params
   in
   let expr, r =
@@ -225,17 +232,17 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
     | Never_inline ->
       record_decision Function_obviously_too_large;
       no_transformation ()
-    | Can_inline _ when E.never_inline env ->
+    | Can_inline_if_no_larger_than _ when E.never_inline env ->
       (* This case only occurs when examining the body of a stub function
          but not in the context of inlining said function.  As such, there
          is nothing to do here (and no decision to report). *)
       no_transformation ()
-    | (Can_inline _) as remaining_inline_threshold ->
+    | (Can_inline_if_no_larger_than _) as remaining_inlining_threshold ->
       (* CR mshinwell for mshinwell: add comment about stub functions *)
       (* CR mshinwell for pchambart: two variables called [threshold] and
-         [inline_threshold] is confusing.
-         pchambart: is [remaining_inline_threshold] better ? *)
-      let r = R.set_inline_threshold r remaining_inline_threshold in
+         [inlining_threshold] is confusing.
+         pchambart: is [remaining_inlining_threshold] better ? *)
+      let r = R.set_inlining_threshold r remaining_inlining_threshold in
       let unchanging_params = closure.unchanging_params in
       (* Try inlining if the function is non-recursive and not too far above
          the threshold (or if the function is to be unconditionally
@@ -247,7 +254,6 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
           ~inline_by_copying_function_body
           ~env ~r ~clos ~funct ~fun_id ~func
           ~record_decision
-          ~inline_threshold
           ~direct_apply
           ~no_transformation
           ~probably_a_functor
@@ -260,7 +266,7 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
         let tried_unrolling = ref false in
         let unrolling_result =
           if E.unrolling_allowed env && E.inlining_level env <= max_level then
-            if E.inside_set_of_closures_declaration clos.ident env then
+            if E.inside_set_of_closures_declaration clos.set_of_closures_id env then
               (* Self unrolling *)
               None
             else begin
@@ -271,13 +277,13 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
               in
               tried_unrolling := true;
               let wsb =
-                Flambdacost.Whether_sufficient_benefit.create body
+                Inlining_cost.Whether_sufficient_benefit.create body
+                  ~original:(fst (no_transformation()))
                   ~probably_a_functor:false
                   (R.benefit r_inlined)
-                  (Can_inline 0)
               in
               let keep_unrolled_version =
-                if Flambdacost.Whether_sufficient_benefit.evaluate wsb then begin
+                if Inlining_cost.Whether_sufficient_benefit.evaluate wsb then begin
                   record_decision (Inlined (Unrolled wsb));
                   true
                 end else begin
@@ -289,7 +295,7 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
               if keep_unrolled_version then
                 Some (body,
                   R.map_benefit r_inlined
-                    (Flambdacost.benefit_union (R.benefit r)))
+                    (Inlining_cost.Benefit.(+) (R.benefit r)))
               else None
             end
           else None
@@ -311,20 +317,19 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
               inline_by_copying_function_declaration ~env
                 ~r:(R.clear_benefit r) ~funct ~clos ~fun_id ~func
                 ~args_with_approxs:(args, approxs) ~unchanging_params
-                ~specialised_args:closure.specialised_args ~ap_dbg
+                ~specialised_args:closure.specialised_args ~dbg
             in
             match copied_function_declaration with
             | Some (expr, r_inlined) ->
                 let wsb =
-                  Flambdacost.Whether_sufficient_benefit.create
+                  Inlining_cost.Whether_sufficient_benefit.create
                     ~original:(fst (no_transformation ()))
                     expr
                     ~probably_a_functor:false
                     (R.benefit r_inlined)
-                    inline_threshold
                 in
                 let keep_inlined_version =
-                  if Flambdacost.Whether_sufficient_benefit.evaluate wsb then begin
+                  if Inlining_cost.Whether_sufficient_benefit.evaluate wsb then begin
                     record_decision (Inlined (Copying_decl (
                         Tried_unrolling !tried_unrolling, wsb)));
                     true
@@ -336,7 +341,7 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
                 in
                 if keep_inlined_version then
                   expr, R.map_benefit r_inlined
-                    (Flambdacost.benefit_union (R.benefit r))
+                    (Inlining_cost.Benefit.(+) (R.benefit r))
                 else
                   no_transformation ()
             | None ->
@@ -352,7 +357,7 @@ let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
       end
   in
   if E.inlining_level env = 0
-  then expr, R.set_inline_threshold r inline_threshold
+  then expr, R.set_inlining_threshold r inlining_threshold
   else expr, r
 
 (* We do not inline inside stubs, which are always inlined at their call site.

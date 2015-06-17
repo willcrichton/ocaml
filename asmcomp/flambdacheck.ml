@@ -14,8 +14,6 @@ open Symbol
 open Abstract_identifiers
 open Flambda
 
-let fatal_error_f fmt = Printf.kprintf Misc.fatal_error fmt
-
 type 'a counter_example =
   | No_counter_example
   | Counter_example of 'a
@@ -29,10 +27,10 @@ let every_used_identifier_is_bound flam =
   let check env = function
     | Fassign(id,_,_)
     | Fvar(id,_) -> test id env
-    | Fset_of_closures({cl_specialised_arg},_) ->
-        Variable.Map.iter (fun _ id -> test id env) cl_specialised_arg
+    | Fset_of_closures({specialised_args},_) ->
+        Variable.Map.iter (fun _ id -> test id env) specialised_args
 
-    | Fsymbol _ | Fconst _ | Fapply _ | Fclosure _
+    | Fsymbol _ | Fconst _ | Fapply _ | Fselect_closure _
     | Fvar_within_closure _ | Flet _ | Fletrec _
     | Fprim _ | Fswitch _ | Fstringswitch _ | Fstaticraise _ | Fstaticcatch _
     | Ftrywith _ | Fifthenelse _ | Fsequence _
@@ -48,15 +46,15 @@ let every_used_identifier_is_bound flam =
           List.fold_left (fun env (id,_) -> Variable.Set.add id env) env defs in
         List.iter (fun (_,def) -> loop env def) defs;
         loop env body
-    | Fset_of_closures ({cl_fun;cl_free_var},_) as exp ->
+    | Fset_of_closures ({function_decls;free_vars},_) as exp ->
         check env exp;
-        Variable.Map.iter (fun _ v -> loop env v) cl_free_var;
+        Variable.Map.iter (fun _ v -> loop env v) free_vars;
         Variable.Map.iter (fun _ { free_variables; body } -> loop free_variables body)
-          cl_fun.funs
+          function_decls.funs
     | Ffor (id, lo, hi, _, body, _) ->
         loop env lo; loop env hi;
         loop (Variable.Set.add id env) body
-    | Fstaticcatch (i, vars, body, handler,_) ->
+    | Fstaticcatch (_i, vars, body, handler,_) ->
         loop env body;
         let env = List.fold_right Variable.Set.add vars env in
         loop env handler
@@ -65,7 +63,7 @@ let every_used_identifier_is_bound flam =
         loop (Variable.Set.add id env) handler
 
     | Fassign _ | Fvar _
-    | Fsymbol _ | Fconst _ | Fapply _ | Fclosure _
+    | Fsymbol _ | Fconst _ | Fapply _ | Fselect_closure _
     | Fvar_within_closure _
     | Fprim _ | Fswitch _ | Fstringswitch _ | Fstaticraise _
     | Fifthenelse _ | Fsequence _
@@ -84,11 +82,11 @@ let every_used_identifier_is_bound flam =
 exception Counter_example_varset of Variable.Set.t
 
 let function_free_variables_are_bound_in_the_closure_and_parameters flam =
-  let f {cl_fun;cl_free_var} _ =
-    let variables_in_closure = Variable.Map.keys cl_free_var in
+  let f {function_decls;free_vars} _ =
+    let variables_in_closure = Variable.Map.keys free_vars in
     let functions_in_closure =
       Variable.Map.fold (fun id _ env -> Variable.Set.add id env)
-        cl_fun.funs Variable.Set.empty in
+        function_decls.funs Variable.Set.empty in
     Variable.Map.iter (fun _ { params; free_variables } ->
         let acceptable_free_variables =
           Variable.Set.union
@@ -98,7 +96,7 @@ let function_free_variables_are_bound_in_the_closure_and_parameters flam =
           Variable.Set.diff free_variables acceptable_free_variables in
         if not (Variable.Set.is_empty counter_examples)
         then raise (Counter_example_varset counter_examples))
-      cl_fun.funs
+      function_decls.funs
   in
   try
     Flambdaiter.iter_on_closures f flam;
@@ -118,10 +116,10 @@ let no_identifier_bound_multiple_times flam =
         add_and_check id
     | Fletrec(defs,_,_) ->
         List.iter (fun (id,_) -> add_and_check id) defs
-    | Fset_of_closures ({cl_fun;cl_free_var},_) ->
-        Variable.Map.iter (fun id _ -> add_and_check id) cl_free_var;
+    | Fset_of_closures ({function_decls;free_vars},_) ->
+        Variable.Map.iter (fun id _ -> add_and_check id) free_vars;
         Variable.Map.iter (fun _ { params } -> List.iter add_and_check params)
-          cl_fun.funs
+          function_decls.funs
     | Ffor (id,_,_,_,_,_) ->
         add_and_check id
     | Fstaticcatch (_,vars,_,_,_) ->
@@ -130,7 +128,7 @@ let no_identifier_bound_multiple_times flam =
         add_and_check id
 
     | Fassign _ | Fvar _
-    | Fsymbol _ | Fconst _ | Fapply _ | Fclosure _
+    | Fsymbol _ | Fconst _ | Fapply _ | Fselect_closure _
     | Fvar_within_closure _
     | Fprim _ | Fswitch _ | Fstringswitch _ | Fstaticraise _
     | Fifthenelse _ | Fsequence _
@@ -154,10 +152,10 @@ let every_bound_variable_is_from_current_compilation_unit
         check id
     | Fletrec(defs,_,_) ->
         List.iter (fun (id,_) -> check id) defs
-    | Fset_of_closures ({cl_fun;cl_free_var},_) ->
-        Variable.Map.iter (fun id _ -> check id) cl_free_var;
+    | Fset_of_closures ({function_decls;free_vars},_) ->
+        Variable.Map.iter (fun id _ -> check id) free_vars;
         Variable.Map.iter (fun _ { params } -> List.iter check params)
-          cl_fun.funs
+          function_decls.funs
     | Ffor (id,_,_,_,_,_) ->
         check id
     | Fstaticcatch (_,vars,_,_,_) ->
@@ -166,7 +164,7 @@ let every_bound_variable_is_from_current_compilation_unit
         check id
 
     | Fassign _ | Fvar _
-    | Fsymbol _ | Fconst _ | Fapply _ | Fclosure _
+    | Fsymbol _ | Fconst _ | Fapply _ | Fselect_closure _
     | Fvar_within_closure _
     | Fprim _ | Fswitch _ | Fstringswitch _ | Fstaticraise _
     | Fifthenelse _ | Fsequence _
@@ -179,7 +177,7 @@ let every_bound_variable_is_from_current_compilation_unit
   with Counter_example_id var ->
     Counter_example var
 
-let no_assign_on_variable_of_kind_Not_assigned flam =
+let no_assign_on_variable_of_kind_Immutable flam =
   let test var env =
     if not (Variable.Set.mem var env)
     then raise (Counter_example_id var) in
@@ -188,17 +186,17 @@ let no_assign_on_variable_of_kind_Not_assigned flam =
     | _ -> ()
   in
   let rec loop env = function
-    | Flet(Assigned,id,def,body,_) ->
+    | Flet(Mutable,id,def,body,_) ->
         loop env def;
         loop (Variable.Set.add id env) body
-    | Fset_of_closures ({cl_fun;cl_free_var},_) ->
-        Variable.Map.iter (fun _ v -> loop env v) cl_free_var;
+    | Fset_of_closures ({function_decls;free_vars},_) ->
+        Variable.Map.iter (fun _ v -> loop env v) free_vars;
         let env = Variable.Set.empty in
-        Variable.Map.iter (fun _ { body } -> loop env body) cl_fun.funs
+        Variable.Map.iter (fun _ { body } -> loop env body) function_decls.funs
 
-    | Flet (Not_assigned, _, _, _, _)
+    | Flet (Immutable, _, _, _, _)
     | Fassign _ | Fvar _
-    | Fsymbol _ | Fconst _ | Fapply _ | Fclosure _
+    | Fsymbol _ | Fconst _ | Fapply _ | Fselect_closure _
     | Fvar_within_closure _ | Fletrec _
     | Fprim _ | Fswitch _ | Fstringswitch _ | Fstaticraise _ | Fstaticcatch _
     | Ftrywith _ | Fifthenelse _ | Fsequence _
@@ -222,10 +220,10 @@ let declared_var_within_closure flam =
     then bound_multiple_times := Some var;
     bound := Var_within_closure.Set.add var !bound
   in
-  let f {cl_fun;cl_free_var} _ =
+  let f {free_vars} _ =
     Variable.Map.iter (fun id _ ->
         let var = Var_within_closure.wrap id in
-        add_and_check var) cl_free_var
+        add_and_check var) free_vars
   in
   Flambdaiter.iter_on_closures f flam;
   !bound, !bound_multiple_times
@@ -239,7 +237,7 @@ exception Counter_example_cu of Compilation_unit.t
 
 let every_declared_closure_is_from_current_compilation_unit
     ~current_compilation_unit flam =
-  let f {cl_fun = { compilation_unit }} _ =
+  let f {function_decls = { compilation_unit }} _ =
     if not (Compilation_unit.equal compilation_unit current_compilation_unit)
     then raise (Counter_example_cu compilation_unit)
   in
@@ -258,10 +256,10 @@ let declared_closure_id flam =
     bound := Closure_id.Set.add var !bound
   in
   let f = function
-    | Fset_of_closures ({cl_fun},_) ->
+    | Fset_of_closures ({function_decls},_) ->
         Variable.Map.iter (fun id _ ->
             let var = Closure_id.wrap id in
-            add_and_check var) cl_fun.funs
+            add_and_check var) function_decls.funs
     | _ -> ()
   in
   Flambdaiter.iter f flam;
@@ -275,14 +273,14 @@ let no_closure_id_is_bound_multiple_times flam =
 let used_closure_id flam =
   let used = ref Closure_id.Set.empty in
   let f = function
-    | Fclosure ({fu_fun;fu_relative_to},_) ->
-        used := Closure_id.Set.add fu_fun !used;
-        (match fu_relative_to with
+    | Fselect_closure ({closure_id;relative_to},_) ->
+        used := Closure_id.Set.add closure_id !used;
+        (match relative_to with
          | None -> ()
-         | Some rel ->
-             used := Closure_id.Set.add fu_fun !used)
-    | Fvar_within_closure ({vc_fun},_) ->
-        used := Closure_id.Set.add vc_fun !used
+         | Some _rel ->
+             used := Closure_id.Set.add closure_id !used)
+    | Fvar_within_closure ({closure_id},_) ->
+        used := Closure_id.Set.add closure_id !used
 
     | Fassign _ | Fvar _ | Fset_of_closures _
     | Fsymbol _ | Fconst _ | Fapply _
@@ -298,8 +296,8 @@ let used_closure_id flam =
 let used_var_within_closure flam =
   let used = ref Var_within_closure.Set.empty in
   let f = function
-    | Fvar_within_closure ({vc_var},_) ->
-        used := Var_within_closure.Set.add vc_var !used
+    | Fvar_within_closure ({var},_) ->
+        used := Var_within_closure.Set.add var !used
     | _ -> ()
   in
   Flambdaiter.iter f flam;
@@ -361,7 +359,7 @@ let every_static_exception_is_caught flam =
 let every_static_exception_is_caught_at_a_single_position flam =
   let caught = ref Static_exception.Set.empty in
   let f = function
-    | Fstaticcatch (i, _, body, handler,_) ->
+    | Fstaticcatch (i, _, _body, _handler,_) ->
         if Static_exception.Set.mem i !caught
         then raise (Counter_example_se i);
         caught := Static_exception.Set.add i !caught
@@ -415,8 +413,8 @@ let check ~current_compilation_unit ?(flambdasym=false) ?(cmxfile=false) flam =
     "bound variable %a is attributed to another compilation unit"
     Variable.print;
 
-  test (no_assign_on_variable_of_kind_Not_assigned flam)
-    "variable %a of kind Not_assigned is assigned" Variable.print;
+  test (no_assign_on_variable_of_kind_Immutable flam)
+    "variable %a of kind Immutable is assigned" Variable.print;
 
   test (no_var_within_closure_is_bound_multiple_times flam)
     "variable within closure %a bound multiple times"

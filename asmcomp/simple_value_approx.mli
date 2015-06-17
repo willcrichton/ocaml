@@ -1,21 +1,28 @@
-(***********************************************************************)
-(*                                                                     *)
-(*                                OCaml                                *)
-(*                                                                     *)
-(*                     Pierre Chambart, OCamlPro                       *)
-(*                                                                     *)
-(*  Copyright 2014 Institut National de Recherche en Informatique et   *)
-(*  en Automatique.  All rights reserved.  This file is distributed    *)
-(*  under the terms of the Q Public License version 1.0.               *)
-(*                                                                     *)
-(***********************************************************************)
+(**************************************************************************)
+(*                                                                        *)
+(*                                OCaml                                   *)
+(*                                                                        *)
+(*                       Pierre Chambart, OCamlPro                        *)
+(*                  Mark Shinwell, Jane Street Europe                     *)
+(*                                                                        *)
+(*   Copyright 2015 Institut National de Recherche en Informatique et     *)
+(*   en Automatique.  All rights reserved.  This file is distributed      *)
+(*   under the terms of the Q Public License version 1.0.                 *)
+(*                                                                        *)
+(**************************************************************************)
 
-(** Simple approximations to the results of computations.  Used during
-    inlining. *)
+(** Simple approximations to the runtime results of computations.
+    This pass is designed for speed rather than accuracy; the performance
+    is important since it is used heavily during inlining. *)
 
 open Abstract_identifiers
 
-type tag = int
+module Tag : sig
+  type t
+
+  val create_exn : int -> t
+  val to_int : t -> int
+end
 
 type 'a boxed_int = 'a Flambdaexport.boxed_int =
   | Int32 : int32 boxed_int
@@ -62,42 +69,6 @@ type 'a boxed_int = 'a Flambdaexport.boxed_int =
    can't prove it and needs to keep it.
 *)
 
-type descr =
-  | Value_block of tag * t array
-  | Value_int of int
-  | Value_constptr of int
-  | Value_float of float
-  | Value_boxed_int : 'a boxed_int * 'a -> descr
-  | Value_set_of_closures of value_set_of_closures
-  | Value_closure of value_offset
-  | Value_string of Flambdaexport.value_string
-  | Value_float_array of int (* size *)
-  | Value_unknown
-  | Value_bottom
-  | Value_extern of Flambdaexport.ExportId.t
-  | Value_symbol of Symbol.t
-  | Value_unresolved of Symbol.t (* No description was found for this symbol *)
-
-and value_offset = {
-  fun_id : Closure_id.t;
-  set_of_closures : value_set_of_closures;
-  set_of_closures_var : Variable.t option;
-}
-
-and value_set_of_closures = {
-  ffunctions : Expr_id.t Flambda.function_declarations;
-  bound_var : t Var_within_closure.Map.t;
-  unchanging_params : Variable.Set.t;
-  specialised_args : Variable.Set.t;
-  ffunction_sb :
-    Flambdasubst.Alpha_renaming_map_for_ids_and_bound_vars_of_closures.t;
-}
-
-and t = {
-  descr : descr;
-  var : Variable.t option;
-  symbol : Symbol.t option;
-}
 (** A value of type [t] corresponds to an approximation of a value.
     Such approximations are deduced at particular points in an expression
     tree, but may subsequently be propagated to other locations.
@@ -118,6 +89,42 @@ and t = {
     [symbol] field is set to some member of [T]; it does not matter which
     one.  (There is no notion of scope for symbols.)
 *)
+type t = {
+  descr : descr;
+  var : Variable.t option;
+  symbol : Symbol.t option;
+}
+
+and descr = private
+  | Value_block of Tag.t * t array
+  | Value_int of int
+  | Value_constptr of int
+  | Value_float of float
+  | Value_boxed_int : 'a boxed_int * 'a -> descr
+  | Value_set_of_closures of value_set_of_closures
+  | Value_closure of value_closure
+  | Value_string of Flambdaexport.value_string
+  | Value_float_array of int (* size *)
+  | Value_unknown
+  | Value_bottom
+  | Value_extern of Flambdaexport.ExportId.t
+  | Value_symbol of Symbol.t
+  | Value_unresolved of Symbol.t (* No description was found for this symbol *)
+
+and value_closure = {
+  closure_id : Closure_id.t;
+  set_of_closures : value_set_of_closures;
+  set_of_closures_var : Variable.t option;
+}
+
+and value_set_of_closures = {
+  function_decls : Expr_id.t Flambda.function_declarations;
+  bound_var : t Var_within_closure.Map.t;
+  unchanging_params : Variable.Set.t;
+  specialised_args : Variable.Set.t;
+  alpha_renaming :
+    Flambdasubst.Alpha_renaming_map_for_ids_and_bound_vars_of_closures.t;
+}
 
 (** Smart constructors *)
 
@@ -126,11 +133,9 @@ val value_int : int -> t
 val value_float : float -> t
 val value_boxed_int : 'i boxed_int -> 'i -> t
 val value_constptr : int -> t
-val value_closure : value_offset -> t
-(* CXR mshinwell for pchambart: update name of [value_unoffseted_closure]
-   pchambart: done *)
+val value_closure : value_closure -> t
 val value_set_of_closures : value_set_of_closures -> t
-val value_block : tag * t array -> t
+val value_block : Tag.t * t array -> t
 val value_extern : Flambdaexport.ExportId.t -> t
 val value_symbol : Symbol.t -> t
 val value_bottom : t
@@ -140,11 +145,11 @@ val const_approx : Flambda.const -> t
 
 val print_approx : Format.formatter -> t -> unit
 
-val make_const_int : int -> 'a -> 'a Flambda.flambda * t
-val make_const_ptr : int -> 'a -> 'a Flambda.flambda * t
-val make_const_bool : bool -> 'a -> 'a Flambda.flambda * t
-val make_const_float : float -> 'a -> 'a Flambda.flambda * t
-val make_const_boxed_int : 'i boxed_int -> 'i -> 'a -> 'a Flambda.flambda * t
+val make_const_int : int -> 'a -> 'a Flambda.t * t
+val make_const_ptr : int -> 'a -> 'a Flambda.t * t
+val make_const_bool : bool -> 'a -> 'a Flambda.t * t
+val make_const_float : float -> 'a -> 'a Flambda.t * t
+val make_const_boxed_int : 'i boxed_int -> 'i -> 'a -> 'a Flambda.t * t
 
 val meet : t -> t -> t
 
@@ -162,15 +167,15 @@ val useful : t -> bool
 val is_certainly_immutable : t -> bool
 
 val check_constant_result
-   : Expr_id.t Flambda.flambda
+   : Expr_id.t Flambda.t
   -> t
-  -> Expr_id.t Flambda.flambda * t
+  -> Expr_id.t Flambda.t * t
 
 val check_var_and_constant_result
    : is_present_in_env:(Variable.t -> bool)
-  -> Expr_id.t Flambda.flambda
+  -> Expr_id.t Flambda.t
   -> t
-  -> Expr_id.t Flambda.flambda * t
+  -> Expr_id.t Flambda.t * t
 
 val get_field : int -> t list -> t
 
@@ -183,14 +188,3 @@ module Import : sig
 end
 
 val really_import_approx : t -> t
-
-(* CR mshinwell for mshinwell: think about this function some more---can it
-   be made more generic?  If not maybe move back into Flambdainline *)
-val which_function_parameters_can_we_specialize
-   : params:Variable.t list
-  -> args:'a Flambda.flambda list
-  -> approximations_of_args:t list
-  -> unchanging_params:Variable.Set.t
-  -> Variable.t Variable.Map.t
-    * (Variable.t list)
-    * ((Variable.t * 'a Flambda.flambda) list)

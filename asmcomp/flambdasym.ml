@@ -33,27 +33,31 @@ open Flambdautils
 
 let all_closures expr =
   let closures = ref Set_of_closures_id.Set.empty in
-  Flambdaiter.iter_on_closures
-    (fun cl _ -> closures := Set_of_closures_id.Set.add cl.cl_fun.ident !closures) expr;
+  Flambdaiter.iter_on_closures (fun cl _ ->
+      closures := Set_of_closures_id.Set.add
+        cl.function_decls.set_of_closures_id !closures)
+    expr;
   !closures
 
 let constant_closures constant_result expr =
   Set_of_closures_id.Set.diff
     (all_closures expr)
-    (constant_result.Flambdaconstants.not_constant_closure)
+    (constant_result.Inconstant_idents.not_constant_closure)
 
-let functions not_constants expr =
+let functions expr =
   let cf_map = ref Closure_id.Map.empty in
   let fun_id_map = ref Set_of_closures_id.Map.empty in
   let argument_kept = ref Set_of_closures_id.Map.empty in
-  let aux ({ cl_fun } as cl) _ =
+  let aux ({ function_decls } as cl) _ =
     let add var _ map =
-      Closure_id.Map.add (Closure_id.wrap var) cl_fun map in
-    cf_map := Variable.Map.fold add cl_fun.funs !cf_map;
-    fun_id_map := Set_of_closures_id.Map.add cl.cl_fun.ident cl.cl_fun !fun_id_map;
+      Closure_id.Map.add (Closure_id.wrap var) function_decls map in
+    cf_map := Variable.Map.fold add function_decls.funs !cf_map;
+    fun_id_map := Set_of_closures_id.Map.add
+      cl.function_decls.set_of_closures_id cl.function_decls !fun_id_map;
     argument_kept :=
-      Set_of_closures_id.Map.add cl.cl_fun.ident
-          (Flambdautils.unchanging_params_in_recursion cl_fun) !argument_kept
+      Set_of_closures_id.Map.add cl.function_decls.set_of_closures_id
+        (Invariant_params.unchanging_params_in_recursion function_decls)
+        !argument_kept
   in
   Flambdaiter.iter_on_closures aux expr;
   !fun_id_map, !cf_map, !argument_kept
@@ -61,17 +65,17 @@ let functions not_constants expr =
 let list_used_variable_withing_closure expr =
   let used = ref Var_within_closure.Set.empty in
   let aux expr = match expr with
-    | Fvar_within_closure({ vc_var },_) ->
-        used := Var_within_closure.Set.add vc_var !used
-    | e -> ()
+    | Fvar_within_closure({ var },_) ->
+        used := Var_within_closure.Set.add var !used
+    | _ -> ()
   in
   Flambdaiter.iter aux expr;
   !used
 
 module type Param1 = sig
   type t
-  val expr : t Flambda.flambda
-  val not_constants : Flambdaconstants.constant_result
+  val expr : t Flambda.t
+  val not_constants : Inconstant_idents.constant_result
   val constant_closures : Set_of_closures_id.Set.t
 end
 
@@ -85,7 +89,7 @@ type infos =
   { global : (int, approx) Hashtbl.t;
     ex_table : descr EidMap.t ref;
     ex_symbol_id : ExportId.t SymbolMap.t ref;
-    constants : unit flambda SymbolTbl.t;
+    constants : unit Flambda.t SymbolTbl.t;
     symbol_alias : Symbol.t SymbolTbl.t }
 
 let init_infos () =
@@ -112,17 +116,11 @@ let new_descr descr infos =
 module Conv(P:Param1) = struct
   open Flambdaexport
 
-  let functions, closures, ex_kept_arguments = functions P.not_constants P.expr
+  let _functions, closures, ex_kept_arguments = functions P.expr
 
   (* functions comming from a linked module *)
   let ex_closures () =
     (Compilenv.approx_env ()).Flambdaexport.ex_functions_off
-
-  let ex_functions () =
-    (Compilenv.approx_env ()).Flambdaexport.ex_functions
-
-  let ex_constant_closures () =
-    (Compilenv.approx_env ()).Flambdaexport.ex_constant_closures
 
   let used_variable_withing_closure = list_used_variable_withing_closure P.expr
 
@@ -138,44 +136,17 @@ module Conv(P:Param1) = struct
         | Not_found ->
             Not_declared
 
-  let functions_declaration_position fid =
-    try Local (Set_of_closures_id.Map.find fid functions) with
-    | Not_found ->
-        try External (Set_of_closures_id.Map.find fid (ex_functions ())) with
-        | Not_found ->
-            Not_declared
-
-  let is_function_constant cf =
-    match function_declaration_position cf with
-    | Local { ident } ->
-        Set_of_closures_id.Set.mem ident P.constant_closures
-    | External { ident } ->
-        Set_of_closures_id.Set.mem ident (ex_constant_closures ())
-    | Not_declared ->
-        fatal_error (Format.asprintf "missing closure %a"
-                       Closure_id.print cf)
-
   let is_local_function_constant cf =
     match function_declaration_position cf with
-    | Local { ident } ->
-        Set_of_closures_id.Set.mem ident P.constant_closures
+    | Local { set_of_closures_id } ->
+      Set_of_closures_id.Set.mem set_of_closures_id P.constant_closures
     | External _ -> false
     | Not_declared ->
         fatal_error (Format.asprintf "missing closure %a"
                        Closure_id.print cf)
 
-  let is_closure_constant fid =
-    match functions_declaration_position fid with
-    | Local { ident } ->
-        Set_of_closures_id.Set.mem ident P.constant_closures
-    | External { ident } ->
-        Set_of_closures_id.Set.mem ident (ex_constant_closures ())
-    | Not_declared ->
-        fatal_error (Format.asprintf "missing closure %a"
-                       Set_of_closures_id.print fid)
-
   let function_arity fun_id =
-    let arity clos off = function_arity (find_declaration fun_id clos) in
+    let arity clos _off = function_arity (find_declaration fun_id clos) in
     try arity (Closure_id.Map.find fun_id closures) fun_id with
     | Not_found ->
         try arity (Closure_id.Map.find fun_id (ex_closures ())) fun_id with
@@ -184,10 +155,10 @@ module Conv(P:Param1) = struct
                            Closure_id.print fun_id)
 
   let not_constants = P.not_constants
-  let is_constant id = not (Variable.Set.mem id not_constants.Flambdaconstants.not_constant_id)
+  let is_constant id = not (Variable.Set.mem id not_constants.Inconstant_idents.not_constant_id)
 
   type env =
-    { sb : unit flambda Variable.Map.t; (* substitution *)
+    { sb : unit Flambda.t Variable.Map.t; (* substitution *)
       cm : Symbol.t Variable.Map.t; (* variables associated to constants *)
       approx : approx Variable.Map.t;
       toplevel : bool }
@@ -279,7 +250,7 @@ module Conv(P:Param1) = struct
   let unit_approx () = Value_id (new_descr (Value_constptr 0))
 
   let rec conv env expr = fst (conv_approx env expr)
-  and conv_approx (env : env) : P.t flambda -> unit flambda * approx = function
+  and conv_approx (env : env) : P.t Flambda.t -> unit Flambda.t * approx = function
     | Fvar (id,_) ->
         begin
           (* If the variable reference a constant, it is replaced by the
@@ -348,24 +319,24 @@ module Conv(P:Param1) = struct
     | Flet(str, id, lam, body, _) ->
         let lam, approx = conv_approx env lam in
         let env =
-          if is_constant id || str = Not_assigned
+          if is_constant id || str = Immutable
           then add_approx id approx env
           else add_approx id Value_unknown env
         in
         begin match is_constant id, constant_symbol lam, str with
-        | _, _, Assigned
+        | _, _, Mutable
         | false, (Not_const | No_lbl | Const_closure), _ ->
             let ubody, body_approx = conv_approx env body in
             Flet(str, id, lam, ubody, ()), body_approx
-        | true, No_lbl, Not_assigned ->
+        | true, No_lbl, Immutable ->
             (* no label: the value is an integer: substitute it *)
             conv_approx (add_sb id lam env) body
-        | _, Lbl lbl, Not_assigned ->
+        | _, Lbl lbl, Immutable ->
             (* label: the value is a block: reference it *)
             conv_approx (add_cm id lbl env) body
-        | true, Const_closure, Not_assigned ->
+        | true, Const_closure, Immutable ->
             conv_approx env body
-        | true, Not_const, Not_assigned ->
+        | true, Not_const, Immutable ->
             Format.eprintf "%a@.%a" Variable.print id
               Printflambda.flambda lam;
             assert false
@@ -424,13 +395,13 @@ module Conv(P:Param1) = struct
          | _ -> Fletrec(not_consts, body, ())),
         approx
 
-    | Fset_of_closures ({ cl_fun = funct;
-                  cl_free_var = fv;
-                  cl_specialised_arg = spec_arg }, _) ->
+    | Fset_of_closures ({ function_decls = funct;
+                  free_vars = fv;
+                  specialised_args = spec_arg }, _) ->
         let args_approx = Variable.Map.map (fun id -> get_approx id env) spec_arg in
         conv_closure env funct args_approx spec_arg fv
 
-    | Fclosure({ fu_closure = lam; fu_fun = id; fu_relative_to = rel }, _) as expr ->
+    | Fselect_closure({ set_of_closures = lam; closure_id = id; relative_to = rel }, _) as expr ->
         let ulam, fun_approx = conv_approx env lam in
         if is_local_function_constant id
         then
@@ -459,10 +430,10 @@ module Conv(P:Param1) = struct
                   Printflambda.flambda expr;
                 assert false
           in
-          Fclosure({ fu_closure = ulam; fu_fun = id; fu_relative_to = rel },()),
+          Fselect_closure({ set_of_closures = ulam; closure_id = id; relative_to = rel },()),
           approx
 
-    | Fvar_within_closure({vc_closure = lam;vc_var = env_var;vc_fun = env_fun_id}, _) as expr ->
+    | Fvar_within_closure({closure = lam;var = env_var;closure_id = env_fun_id}, _) as expr ->
         let ulam, fun_approx = conv_approx env lam in
         let approx = match get_descr fun_approx with
           | Some (Value_closure { closure = { bound_var } }) ->
@@ -485,18 +456,18 @@ module Conv(P:Param1) = struct
                 Printflambda.flambda expr
                 Printflambda.flambda ulam;
               assert false in
-        Fvar_within_closure({vc_closure = ulam;vc_var = env_var;vc_fun = env_fun_id}, ()),
+        Fvar_within_closure({closure = ulam;var = env_var;closure_id = env_fun_id}, ()),
         approx
 
-    (* | Fapply({ap_function = *)
-    (*             Fclosure ({fu_closure = Fset_of_closures ({ cl_fun = ffuns; *)
-    (*                                                  cl_free_var = fv; *)
-    (*                                                  cl_specialised_arg }, _); *)
-    (*                         fu_fun = off; *)
-    (*                         fu_relative_to = (None as rel)}, _); *)
-    (*           ap_arg = args; *)
-    (*           ap_kind = Direct direc; *)
-    (*           ap_dbg = dbg}, _) -> *)
+    (* | Fapply({func = *)
+    (*             Fselect_closure ({closure = Fset_of_closures ({ function_decls = ffuns; *)
+    (*                                                  free_vars = fv; *)
+    (*                                                  specialised_args }, _); *)
+    (*                         closure_id = off; *)
+    (*                         relative_to = (None as rel)}, _); *)
+    (*           arg = args; *)
+    (*           kind = Direct direc; *)
+    (*           dbg = dbg}, _) -> *)
     (*     assert (Closure_id.equal off direc); *)
     (*     let uargs, args_approx = conv_list_approx env args in *)
     (*     let func = *)
@@ -505,27 +476,27 @@ module Conv(P:Param1) = struct
     (*     assert(List.length uargs = List.length func.params); *)
     (*     let args_approx = *)
     (*       List.fold_right2 Variable.Map.add func.params args_approx Variable.Map.empty *)
-    (*       |> Variable.Map.filter (fun var _ -> Variable.Map.mem var cl_specialised_arg) in *)
-    (*     let uffuns, fun_approx = conv_closure env ffuns args_approx cl_specialised_arg fv in *)
+    (*       |> Variable.Map.filter (fun var _ -> Variable.Map.mem var specialised_args) in *)
+    (*     let uffuns, fun_approx = conv_closure env ffuns args_approx specialised_args fv in *)
     (*     let approx = match get_descr fun_approx with *)
     (*       | Some(Value_closure { fun_id; closure = { results } }) -> *)
     (*           Closure_id.Map.find fun_id results *)
     (*       | _ -> Value_unknown *)
     (*     in *)
 
-    (*     Fapply({ap_function = *)
-    (*               Fclosure ({fu_closure = uffuns; *)
-    (*                           fu_fun = off; *)
-    (*                           fu_relative_to = rel}, ()); *)
-    (*             ap_arg = uargs; *)
-    (*             ap_kind = Direct direc; *)
-    (*             ap_dbg = dbg}, ()), *)
+    (*     Fapply({func = *)
+    (*               Fselect_closure ({closure = uffuns; *)
+    (*                           closure_id = off; *)
+    (*                           relative_to = rel}, ()); *)
+    (*             arg = uargs; *)
+    (*             kind = Direct direc; *)
+    (*             dbg = dbg}, ()), *)
     (*     approx *)
 
-    | Fapply({ap_function = funct; ap_arg = args; ap_kind} as ap, _) ->
+    | Fapply({func = funct; args; kind = direct; dbg = dbg; return_arity}, _) ->
         let ufunct, fun_approx = conv_approx env funct in
-        let ap_kind = match ap_kind with
-          | Direct _ -> ap_kind
+        let direct = match direct with
+          | Direct _ -> direct
           | Indirect -> match get_descr fun_approx with
             (* We mark some calls as direct when it is unknown:
                for instance if simplify wasn't run before. *)
@@ -539,15 +510,18 @@ module Conv(P:Param1) = struct
               Closure_id.Map.find fun_id results
           | _ -> Value_unknown
         in
-        Fapply({ap with ap_function = ufunct; ap_arg = conv_list env args; ap_kind}, ()),
+        Fapply({func = ufunct; args = conv_list env args;
+                kind = direct;
+                dbg = dbg;
+                return_arity}, ()),
         approx
 
     | Fswitch(arg, sw, _) ->
         Fswitch(conv env arg,
                 { sw with
-                  fs_consts = List.map (fun (i,lam) -> i, conv env lam) sw.fs_consts;
-                  fs_blocks = List.map (fun (i,lam) -> i, conv env lam) sw.fs_blocks;
-                  fs_failaction = may_map (conv env) sw.fs_failaction }, ()),
+                  consts = List.map (fun (i,lam) -> i, conv env lam) sw.consts;
+                  blocks = List.map (fun (i,lam) -> i, conv env lam) sw.blocks;
+                  failaction = may_map (conv env) sw.failaction }, ()),
         Value_unknown
 
     | Fstringswitch(arg, sw, def, _) ->
@@ -557,7 +531,7 @@ module Conv(P:Param1) = struct
            may_map (conv env) def, ()),
         Value_unknown
 
-    | Fprim(Lambda.Pgetglobal id, l, dbg, _) ->
+    | Fprim(Lambda.Pgetglobal id, l, _, _) ->
         assert(l = []);
         let sym = Compilenv.symbol_for_global' id in
         Fsymbol (sym, ()),
@@ -664,19 +638,22 @@ module Conv(P:Param1) = struct
         Value_unknown
 
   and conv_closure env functs param_approxs spec_arg fv =
-    let closed = Set_of_closures_id.Set.mem functs.ident P.constant_closures in
-
+    let closed =
+      Set_of_closures_id.Set.mem functs.set_of_closures_id P.constant_closures
+    in
     let fv_ulam_approx = Variable.Map.map (conv_approx env) fv in
-    let fv_ulam = Variable.Map.map (fun (lam,approx) -> lam) fv_ulam_approx in
-
+    let fv_ulam =
+      Variable.Map.map (fun (lam, _approx) -> lam) fv_ulam_approx
+    in
     let kept_fv id =
       let cv = Var_within_closure.wrap id in
       not (is_constant id)
       || (Var_within_closure.Set.mem cv used_variable_withing_closure) in
 
     let used_fv_approx = Variable.Map.filter (fun id _ -> kept_fv id) fv_ulam_approx in
-    let used_fv = Variable.Map.map (fun (lam,approx) -> lam) used_fv_approx in
-
+    let used_fv =
+      Variable.Map.map (fun (lam, _approx) -> lam) used_fv_approx
+    in
     let varmap_to_closfun_map map =
       Variable.Map.fold (fun var v acc ->
           let cf = Closure_id.wrap var in
@@ -684,7 +661,7 @@ module Conv(P:Param1) = struct
         map Closure_id.Map.empty in
 
     let value_closure' =
-      { closure_id = functs.ident;
+      { closure_id = functs.set_of_closures_id;
         bound_var =
           Variable.Map.fold (fun off_id (_,approx) map ->
               let cv = Var_within_closure.wrap off_id in
@@ -716,7 +693,7 @@ module Conv(P:Param1) = struct
           spec_arg
     in
 
-    let conv_function id func =
+    let conv_function _id func =
 
       (* inside the body of the function, we cannot access variables
          declared outside, so take a clean substitution table. *)
@@ -783,10 +760,10 @@ module Conv(P:Param1) = struct
 
     let expr =
       let expr =
-        Fset_of_closures ({ cl_fun = ufunct;
-                    cl_free_var = used_fv;
-                    cl_specialised_arg = spec_arg }, ()) in
-      if Set_of_closures_id.Set.mem ufunct.ident P.constant_closures
+        Fset_of_closures ({ function_decls = ufunct;
+                    free_vars = used_fv;
+                    specialised_args = spec_arg }, ()) in
+      if Set_of_closures_id.Set.mem ufunct.set_of_closures_id P.constant_closures
       then
         let sym = add_constant expr closure_ex_id in
         Fsymbol(sym, ())
@@ -803,13 +780,13 @@ module Conv(P:Param1) = struct
     | Fsymbol _ -> true
     | _ -> false
 
-  and constant_symbol : unit flambda -> const_sym = function
+  and constant_symbol : unit Flambda.t -> const_sym = function
     | Fsymbol(sym, ()) ->
         Lbl sym
     | Fconst(_, ()) ->
         No_lbl
-    | Fset_of_closures ({ cl_fun }, _) ->
-        if Set_of_closures_id.Set.mem cl_fun.ident P.constant_closures
+    | Fset_of_closures ({ function_decls }, _) ->
+        if Set_of_closures_id.Set.mem function_decls.set_of_closures_id P.constant_closures
         then Const_closure
         else Not_const
     | _ -> Not_const
@@ -822,7 +799,7 @@ end
 module type Param2 = sig
   include Param1
   val infos : infos
-  val expr : unit flambda
+  val expr : unit Flambda.t
 end
 
 module Prepare(P:Param2) = struct
@@ -850,8 +827,8 @@ module Prepare(P:Param2) = struct
 
   let ex_functions =
     let ex_functions = ref Set_of_closures_id.Map.empty in
-    let aux { cl_fun } _ =
-      ex_functions := Set_of_closures_id.Map.add cl_fun.ident cl_fun !ex_functions
+    let aux { function_decls } _ =
+      ex_functions := Set_of_closures_id.Map.add function_decls.set_of_closures_id function_decls !ex_functions
     in
     Flambdaiter.iter_on_closures aux expr;
     SymbolMap.iter (fun _ -> Flambdaiter.iter_on_closures aux) constants;
@@ -931,8 +908,8 @@ module Prepare(P:Param2) = struct
 
 end
 
-let convert (type a) ~compilation_unit (expr:a Flambda.flambda) =
-  let not_constants = Flambdaconstants.not_constants ~compilation_unit ~for_clambda:true expr in
+let convert (type a) ~compilation_unit (expr:a Flambda.t) =
+  let not_constants = Inconstant_idents.not_constants ~compilation_unit ~for_clambda:true expr in
   let constant_closures = constant_closures not_constants expr in
   let module P1 = struct
     type t = a
