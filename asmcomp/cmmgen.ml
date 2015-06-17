@@ -1395,7 +1395,7 @@ let rec transl = function
           assert false
       | (Pmakeblock(tag, mut), args) ->
           make_alloc tag (List.map transl args)
-      | (Pmakeblock_noheap _, args) ->
+      | (Pmakeblock_noheap, args) ->
           Cop(Cmultistore, (List.map transl args))
       | (Pgetblock_noheap i, args) ->
           Cop(Cmultiload(i), (List.map transl args))

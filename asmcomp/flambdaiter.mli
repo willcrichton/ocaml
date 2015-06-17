@@ -45,5 +45,5 @@ val subexpression_bound_variables : 'a flambda -> (Variable.Set.t*'a flambda) li
 
 val map_data : ('a -> 'b) -> 'a flambda -> 'b flambda
 
-val fold_return_sites : ('acc * 'a flambda -> 'acc * 'a flambda) -> 'acc -> 'a flambda ->
+val fold_return_sites : ('acc -> 'a flambda -> 'acc * 'a flambda) -> 'acc -> 'a flambda ->
   'acc * 'a flambda

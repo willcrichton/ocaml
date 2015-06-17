@@ -518,7 +518,7 @@ let rec fold_return_sites f acc tree =
   | Fassign _
   | Fsend _
   | Funreachable _
-  | Fconst _ -> f(acc, tree)
+  | Fconst _ -> f acc tree
 
   | Flet(kind, id, def, body, d) ->
     let (acc, body') = fold_return_sites f acc body in

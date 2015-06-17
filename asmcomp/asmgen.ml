@@ -113,7 +113,7 @@ let compile_genfuns ppf f =
 let flambda ppf (size, exported, lam) =
   let current_compilation_unit = Compilenv.current_unit () in
   let dump_and_check s flam =
-    if !Clflags.dump_flambda
+    if !Clflags.dump_flambda && false
     then Format.fprintf ppf "%s:@ %a@." s Printflambda.flambda flam;
     try Flambdacheck.check ~current_compilation_unit flam
     with e ->
@@ -149,7 +149,7 @@ let flambda ppf (size, exported, lam) =
     Flambdasym.convert ~compilation_unit:current_compilation_unit flam in
   let fl,const,export = fl_sym in
   Compilenv.set_export_info export;
-  if !Clflags.dump_flambda
+  if !Clflags.dump_flambda && false
   then begin
     Format.fprintf ppf "flambdasym@ %a@." Printflambda.flambda fl;
     Symbol.SymbolMap.iter (fun sym lam ->

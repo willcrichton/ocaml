@@ -509,12 +509,16 @@ method emit_expr env exp =
       begin match self#emit_parts_list env args with
         None -> None
       | Some(simple_args, env) ->
-          let ty = oper_result_type (List.length simple_args) op in
+          let ty = match op with
+            Capply(ty, _) -> ty
+          | _ -> oper_result_type (List.length simple_args) op in
           let (new_op, new_args) = self#select_operation op simple_args in
           let dbg = debuginfo_op op in
           match new_op with
             Icall_ind ->
-              if Array.length ty > 1 then Misc.fatal_error("NO") else
+              if Array.length ty > 1 then
+                fatal_error("Selectgen.emit_expr: Indirect call cannot have return arity > 1")
+              else
               let r1 = self#emit_tuple env new_args in
               let rarg = Array.sub r1 1 (Array.length r1 - 1) in
               let rd = self#regs_for_multi ty in
@@ -558,6 +562,9 @@ method emit_expr env exp =
           | Imultiload index ->
               let r1 = self#emit_tuple env new_args in
               let rd = self#regs_for ty.(0) in
+              if Array.length r1 <= index && false then
+                fatal_error("Selectgen.emit_expr: Imultiload index larger than multireturn length")
+              else
               self#insert_move r1.(index) rd.(0);
               Some rd
           | op ->

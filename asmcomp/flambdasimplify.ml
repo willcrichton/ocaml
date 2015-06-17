@@ -10,6 +10,7 @@
 (*                                                                     *)
 (***********************************************************************)
 
+open Ext_types
 open Abstract_identifiers
 
 module A = Flambdaapprox
@@ -585,49 +586,68 @@ let remove_unused_globals tree =
 let plam flam =
   if !Clflags.dump_flambda then Printflambda.flambda Format.std_formatter flam else ()
 
-let unbox_and_check ({body} as fn : 'a Flambda.function_declaration) =
-  if fn.return_arity <> 1 then (fn, false, 0) else
-  let unbox_return ((can_unbox, num_returns), flam) =
-    match flam with
-    (* TODO: other return sites that matter? *)
-    | Flambda.Fprim(Pmakeblock(tag, Immutable), arg, dbg, attr) ->
+let check_can_unbox ({body; return_arity} : 'a Flambda.function_declaration) =
+  let open Flambda in
+  let fail_return = (false, 0, Int.Map.empty) in
+  if return_arity <> 1 then fail_return else
+  let unbox_return (can_unbox, num_returns, map) flam = match flam with
+    | Fprim(Pmakeblock(tag, Immutable), arg, dbg, attr) ->
       (* 9 is an arbitrary maximum number of registers, see Proc.loc_results *)
-      (* For now, only deal with tag 0 *)
-      if List.length arg > 9 || tag <> 0 then
-        ((false, num_returns), flam)
-      else
-        ((can_unbox, List.length arg),
-         Fprim(Pmakeblock_noheap(tag), arg, dbg, attr))
-    | Fstaticraise _ -> ((can_unbox, num_returns), flam)
-    | _ -> ((false, num_returns), flam) in
-  let ((can_unbox, num_returns), unboxed_body) =
-    Flambdaiter.fold_return_sites unbox_return (true, 0) body in
-  let new_fn =
-    if can_unbox then {fn with body = unboxed_body;
-                               return_arity = num_returns}
-    else fn in
-  (new_fn, can_unbox, num_returns)
+      let arity = List.length arg in
+      if arity > 9 || arity = 0 then (fail_return, flam)
+      else ((can_unbox, arity, Int.Map.add tag arity map), flam)
+    | Fstaticraise _ | Fconst(Fconst_pointer _, _) -> ((can_unbox, num_returns, map), flam)
+    | _ -> (fail_return, flam) in
+  fst (Flambdaiter.fold_return_sites unbox_return (true, 1, Int.Map.empty) body)
+
+let no_arg_variant = 10 (* TODO(wcricton): appropriate value for this? *)
+let dummy_value = 1337
+
+let unbox_fn ({body} : 'a Flambda.function_declaration) num_returns =
+  let open Flambda in
+  let int_to_flam n = Fconst(Fconst_base(Const_int(n)), Expr_id.create()) in
+  let rec generator = function 0 -> [] | n -> (int_to_flam dummy_value) :: generator (n - 1) in
+  let unbox_return () = function
+    | Fprim(Pmakeblock(tag, Immutable), arg, dbg, attr) ->
+      let len = num_returns - (List.length arg) in
+      ((), Fprim(Pmakeblock_noheap,
+                 ((int_to_flam tag) :: arg) @ (generator len),
+                 dbg,
+                 attr))
+    | Fconst(Fconst_pointer(n), attr)  ->
+      let len = num_returns - 1 in
+      ((), Fprim(Pmakeblock_noheap,
+                 (int_to_flam no_arg_variant) :: (int_to_flam n) :: (generator len),
+                 Debuginfo.none,
+                 attr))
+    | Fstaticraise _ as e -> ((), e)
+    | e -> Misc.fatal_error "Unboxed invalid return site" in
+  let (_, body) = Flambdaiter.fold_return_sites unbox_return () body in
+  body
 
 let unbox_returns tree =
   let open Flambda in
   Flambdaiter.map (function
-    | Fclosure({fu_closure = Fset_of_closures({cl_fun; cl_free_var; cl_specialised_arg},
-                                              dset)} as closure,
+    | Fclosure({fu_closure =
+                  Fset_of_closures({cl_fun; cl_free_var; cl_specialised_arg}, dset)}
+               as closure,
                closure_expr_id) as flam ->
       if not (!Clflags.dump_flambda) ||
         Variable.Map.cardinal cl_fun.funs <> 1
-      then
-      flam else
+      then flam else
 
       (* Update return sites in the closure if eligible *)
       let (fn_id, fn) = Variable.Map.choose cl_fun.funs in
-      let (fn, was_unboxed, num_returns) = unbox_and_check fn in
-      if (not was_unboxed) then flam else
+      let (can_unbox, num_returns, return_map) = check_can_unbox fn in
+      if (not can_unbox) then flam else
+
+      let fn = {fn with body = (unbox_fn fn num_returns); return_arity = num_returns} in
 
       let mkvar = Variable.create ~current_compilation_unit:cl_fun.compilation_unit in
       let mkvar_suffix v s = mkvar ((Variable.unique_name v) ^ s) in
 
       let unboxed_return_id = mkvar_suffix fn_id "_unboxed_return" in
+      let tag_var = mkvar_suffix fn_id "_tag" in
       let result_vars =
         let rec builder = function
           | 0 -> []
@@ -635,11 +655,28 @@ let unbox_returns tree =
         List.map (mkvar_suffix fn_id) (List.rev (builder num_returns)) in
 
       (* Construct new wrapper function piece-by-piece *)
-      let result =
-        Fprim(
-          Pmakeblock(0, Immutable),
-          List.map (fun v -> Fvar(v, Expr_id.create())) result_vars,
-          Debuginfo.none,
+      let switch =
+        let tags = List.map (fun (tag, _) -> tag) (Int.Map.bindings return_map) in
+        let mkblock tag =
+          let return_arity = Int.Map.find tag return_map in
+          (tag, Fprim(
+            Pmakeblock(tag, Immutable),
+            (result_vars
+             |> List.mapi (fun i x -> (i, x))
+             |> List.filter (fun (i, x) -> i < return_arity)
+             |> List.map (fun v -> Fvar(snd v, Expr_id.create()))),
+            Debuginfo.none,
+            Expr_id.create())) in
+        let no_variant_case = Fvar(List.nth result_vars 0, Expr_id.create()) in
+        Fswitch(
+          Fvar(tag_var, Expr_id.create()),
+          {
+            fs_numconsts = Int.Set.of_list (no_arg_variant :: tags);
+            fs_consts = (no_arg_variant, no_variant_case) :: (List.map mkblock tags);
+            fs_numblocks = Int.Set.empty;
+            fs_blocks = [];
+            fs_failaction = None;
+          },
           Expr_id.create()) in
 
       let field_bindings =
@@ -654,8 +691,8 @@ let unbox_returns tree =
                      Expr_id.create()),
                acc,
                Expr_id.create()))
-          result
-          (List.mapi (fun i x -> (i, x)) result_vars) in
+          switch
+          (List.mapi (fun i x -> (i, x)) (tag_var :: result_vars)) in
 
       let wrapper_params = List.map (fun id -> mkvar_suffix id "_wrapper") fn.params in
       let inner_closure_id = mkvar_suffix fn_id "_multireturn" in
@@ -669,7 +706,7 @@ let unbox_returns tree =
             ap_arg = List.map (fun v -> Fvar(v, Expr_id.create())) wrapper_params;
             ap_kind = Direct(Closure_id.wrap inner_fn_id);
             ap_dbg = Debuginfo.none;
-            ap_return_arity = num_returns;
+            ap_return_arity = num_returns + 1;
           }, Expr_id.create()),
           field_bindings,
           Expr_id.create()) in
@@ -722,7 +759,7 @@ let unbox_returns tree =
             closure with fu_closure = Fset_of_closures({
               cl_fun = {cl_fun with funs = Variable.Map.singleton inner_fn_id final_fn};
               cl_free_var = inner_free_closure_var;
-              cl_specialised_arg;
+              cl_specialised_arg = Variable.Map.empty;
             }, dset);
             fu_fun = Closure_id.wrap inner_fn_id},
           Expr_id.create()),
