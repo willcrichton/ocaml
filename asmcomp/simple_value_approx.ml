@@ -45,6 +45,7 @@ type descr =
   | Value_extern of Flambdaexport.ExportId.t
   | Value_symbol of Symbol.t
   | Value_unresolved of Symbol.t
+  | Value_conditional of t * t
 
 and value_closure =
   { closure_id : Closure_id.t;
@@ -102,11 +103,14 @@ let rec print_descr ppf = function
     end
   | Value_float_array size ->
       Format.fprintf ppf "float_array %i" size
-  | Value_boxed_int (t, i) ->
+  | Value_boxed_int (t, i) -> begin
     match t with
     | Int32 -> Format.fprintf ppf "%li" i
     | Int64 -> Format.fprintf ppf "%Li" i
     | Nativeint -> Format.fprintf ppf "%ni" i
+    end
+  | Value_conditional (thn, els) ->
+    Format.printf "(conditional @ %a %a)" print_descr thn.descr print_descr els.descr
 
 and print_approx ppf { descr } = print_descr ppf descr
 
@@ -126,6 +130,7 @@ let value_extern ex = approx (Value_extern ex)
 let value_symbol sym = { (approx (Value_symbol sym)) with symbol = Some sym }
 let value_bottom = approx Value_bottom
 let value_unresolved sym = approx (Value_unresolved sym)
+let value_conditional thn els = approx (Value_conditional (thn,els))
 
 let value_string size contents = approx (Value_string {size; contents })
 let value_float_array size = approx (Value_float_array size)
@@ -182,7 +187,7 @@ let check_constant_result (lam : _ Flambda.t) approx =
       make_const_boxed_int t i (Flambdautils.data_at_toplevel_node lam)
     | Value_symbol sym ->
       Fsymbol (sym, Flambdautils.data_at_toplevel_node lam), approx
-    | Value_string _ | Value_float_array _
+    | Value_string _ | Value_float_array _ | Value_conditional _
     | Value_block _ | Value_set_of_closures _ | Value_closure _
     | Value_unknown | Value_bottom | Value_extern _ | Value_unresolved _ ->
       lam, approx
@@ -206,7 +211,7 @@ let known t =
   match t.descr with
   | Value_unresolved _
   | Value_unknown -> false
-  | Value_string _ | Value_float_array _
+  | Value_string _ | Value_float_array _ | Value_conditional _
   | Value_bottom | Value_block _ | Value_int _ | Value_constptr _
   | Value_set_of_closures _ | Value_closure _ | Value_extern _
   | Value_float _ | Value_boxed_int _ | Value_symbol _ -> true
@@ -214,14 +219,14 @@ let known t =
 let useful t =
   match t.descr with
   | Value_unresolved _ | Value_unknown | Value_bottom -> false
-  | Value_string _ | Value_float_array _
+  | Value_string _ | Value_float_array _ | Value_conditional _
   | Value_block _ | Value_int _ | Value_constptr _ | Value_set_of_closures _
   | Value_float _ | Value_boxed_int _ | Value_closure _ | Value_extern _
   | Value_symbol _ -> true
 
 let is_certainly_immutable t =
   match t.descr with
-  | Value_string { contents = Some _ }
+  | Value_string { contents = Some _ } | Value_conditional _
   | Value_block _ | Value_int _ | Value_constptr _ | Value_set_of_closures _
   | Value_float _ | Value_boxed_int _ | Value_closure _ -> true
   | Value_string { contents = None } | Value_float_array _
@@ -256,6 +261,8 @@ let get_field i = function
         (* We don't know anything, but we must remember that it comes
            from another compilation unit in case it contained a closure *)
       value_unresolved sym
+    | Value_conditional _ ->
+      value_unknown
 
 let descrs approxs = List.map (fun v -> v.descr) approxs
 

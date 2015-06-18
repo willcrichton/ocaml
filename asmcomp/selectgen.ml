@@ -23,7 +23,7 @@ type environment = (Ident.t, Reg.t array array) Tbl.t
 (* Infer the type of the result of an operation *)
 
 let oper_result_type n = function
-    Capply(ty, _) -> ty (* TODO(wcrichton) *)
+    Capply(ty, _) -> ty
   | Cextcall(s, ty, alloc, _) -> [|ty|]
   | Cload c ->
       begin match c with
@@ -742,7 +742,6 @@ method emit_stores env data regs_addr =
 
 (* Same, but in tail position *)
 
-(* TODO(wcrichton): look at this *)
 method private emit_return env exp =
   match self#emit_expr env exp with
     None -> ()
@@ -865,7 +864,6 @@ method private emit_tail_sequence env exp =
 
 (* Sequentialization of a function definition *)
 
-(* TODO(wcrichton): potentially change calling convention here *)
 method emit_fundecl f =
   Proc.contains_calls := false;
   current_function_name := f.Cmm.fun_name;

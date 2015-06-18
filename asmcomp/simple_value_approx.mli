@@ -110,6 +110,7 @@ and descr = private
   | Value_extern of Flambdaexport.ExportId.t
   | Value_symbol of Symbol.t
   | Value_unresolved of Symbol.t (* No description was found for this symbol *)
+  | Value_conditional of t * t
 
 and value_closure = {
   closure_id : Closure_id.t;
@@ -140,6 +141,7 @@ val value_extern : Flambdaexport.ExportId.t -> t
 val value_symbol : Symbol.t -> t
 val value_bottom : t
 val value_unresolved : Symbol.t -> t
+val value_conditional : t -> t -> t
 
 val const_approx : Flambda.const -> t
 

@@ -1252,8 +1252,6 @@ let rec is_unboxed_number = function
   | Ulet (_, _, e) | Usequence (_, e) -> is_unboxed_number e
   | _ -> No_unboxing
 
-(* TODO(wcrichton): traversing to check if a function uses a block as a value
- * should look basically like this. *)
 let subst_boxed_number unbox_fn boxed_id unboxed_id box_chunk box_offset exp =
   let need_boxed = ref false in
   let assigned = ref false in
@@ -1272,7 +1270,6 @@ let subst_boxed_number unbox_fn boxed_id unboxed_id box_chunk box_offset exp =
         if Ident.same id boxed_id && chunk = box_chunk && box_offset = 0
         then Cvar unboxed_id
         else e
-    (* TODO(wcrichton) projection to field of a block occurs here *)
     | Cop(Cload chunk, [Cop(Cadda, [Cvar id; Cconst_int ofs])]) as e ->
         if Ident.same id boxed_id && chunk = box_chunk && ofs = box_offset
         then Cvar unboxed_id
@@ -2059,7 +2056,6 @@ and transl_unbox_int bi = function
       Cconst_int i
   | exp -> unbox_int bi (transl exp)
 
-(* TODO(wcrichton): optimizations always occur in lets, look at this fn *)
 and transl_unbox_let box_fn unbox_fn transl_unbox_fn box_chunk box_offset
                      id exp body =
   let unboxed_id = Ident.create (Ident.name id) in

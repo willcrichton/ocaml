@@ -216,7 +216,7 @@ let transform_var_within_closure_expression env r expr closure
       Printflambda.flambda closure
       Printflambda.flambda fenv_field.closure;
     assert false
-  | Value_string _ | Value_float_array _
+  | Value_string _ | Value_float_array _ | Value_conditional _
   | Value_block _ | Value_int _ | Value_constptr _
   | Value_float _ | A.Value_boxed_int _ | Value_set_of_closures _
   | Value_bottom | Value_extern _ | Value_symbol _ ->
@@ -231,7 +231,7 @@ let transform_closure_expression env r closure closure_id rel annot =
     let closure_id = AR.subst_closure_id closure'.alpha_renaming closure_id in
     begin try
       ignore (Flambdautils.find_declaration closure_id closure'.function_decls)
-    with Not_found ->
+     with Not_found ->
       Misc.fatal_error (Format.asprintf "no function %a in the closure@ %a@."
         Closure_id.print closure_id
         Printflambda.flambda closure)
@@ -300,7 +300,7 @@ let transform_closure_expression env r closure closure_id rel annot =
       ret r (A.value_unresolved sym)
   | Value_block _ | Value_int _ | Value_constptr _ | Value_float _
   | A.Value_boxed_int _ | Value_unknown | Value_bottom | Value_extern _
-  | Value_string _ | Value_float_array _
+  | Value_string _ | Value_float_array _ | Value_conditional _
   | Value_symbol _ ->
     Format.printf "%a@.%a@." Closure_id.print closure_id
       Printflambda.flambda closure;
@@ -462,6 +462,14 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
       approx
   | Fprim ((Psequand | Psequor), _, _, _) ->
     Misc.fatal_error "Psequand or Psequor with wrong number of arguments"
+  | Fprim (Pisblock, [cond; thn; els], dbg, annot) ->
+    let cond, r = loop env r cond in
+    let thn, r = loop env r thn in
+    let thn_approx = R.approx r in
+    let els, r = loop env r els in
+    let els_approx = R.approx r in
+    Fprim (Pisblock, [cond; thn; els], dbg, annot),
+    ret r (A.value_conditional thn_approx els_approx)
   | Fprim (p, args, dbg, annot) as expr ->
     let (args', approxs, r) = loop_list env r args in
     let expr = if args' == args then expr else Fprim (p, args', dbg, annot) in
@@ -522,6 +530,11 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
        as true), we can drop the if and replace it by a sequence.
        if arg is not effectful we can also drop it. *)
     let arg, r = loop env r arg in
+    let foo () = match arg with
+      | Fvar(var, _) ->
+            true
+      | _ -> false in
+
     begin match (R.approx r).descr with
     | Value_constptr 0 ->
       (* constant false, keep ifnot *)
@@ -533,6 +546,18 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
       let ifso, r = loop env r ifso in
       let r = R.map_benefit r Inlining_cost.Benefit.remove_branch in
       Effect_analysis.sequence arg ifso annot, r
+    | Value_conditional (thn, els) when foo() ->
+      Format.printf "%a %a\n" A.print_approx thn A.print_approx els;
+      let var = match arg with Fvar(var, _) -> var | _ -> assert false in
+      let env = E.inside_branch env in
+      let env' = E.add_approx var thn env in
+      let ifso, r = loop env' r ifso in
+      let ifso_approx = R.approx r in
+      let env' = E.add_approx var els env in
+      let ifnot, r = loop env' r ifnot in
+      let ifnot_approx = R.approx r in
+      Fifthenelse (arg, ifso, ifnot, annot),
+      ret r (A.meet ifso_approx ifnot_approx)
     | _ ->
       let env = E.inside_branch env in
       let ifso, r = loop env r ifso in

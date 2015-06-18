@@ -411,7 +411,9 @@ module Conv(P:Param2) = struct
             Uconst(Uconst_ref (lbl, Some (cst)))
         end
 *)
-
+    | Fprim(Pisblock, [arg; ifso; ifnot], _, _)
+    | Fifthenelse(arg, ifso, ifnot, _) ->
+        Uifthenelse(conv env arg, conv env ifso, conv env ifnot)
     | Fprim(p, args, dbg, _) ->
         Uprim(p, conv_list env args, dbg)
     | Fstaticraise (i, args, _) ->
@@ -426,8 +428,6 @@ module Conv(P:Param2) = struct
     | Ftrywith(body, var, handler, _) ->
         let id, env_handler = add_unique_ident var env in
         Utrywith(conv env body, id, conv env_handler handler)
-    | Fifthenelse(arg, ifso, ifnot, _) ->
-        Uifthenelse(conv env arg, conv env ifso, conv env ifnot)
     | Fsequence(lam1, lam2, _) ->
         Usequence(conv env lam1, conv env lam2)
     | Fwhile(cond, body, _) ->
