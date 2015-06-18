@@ -2,7 +2,12 @@ open Abstract_identifiers
 
 type t
 
-val empty : never_inline:bool -> t
+val empty
+   : never_inline:bool
+  -> backend:(module Backend_intf.S)
+  -> t
+
+val backend : t -> (module Backend_intf.S)
 
 val local : t -> t
 

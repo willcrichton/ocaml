@@ -110,44 +110,12 @@ let compile_genfuns ppf f =
        | _ -> ())
     (Cmmgen.generic_functions true [Compilenv.current_unit_infos ()])
 
-let flambda ppf (size, exported, lam) =
+let prep_flambda_for_export ppf flam =
   let current_compilation_unit = Compilenv.current_unit () in
-  let dump_and_check s flam =
-    if !Clflags.dump_flambda
-    then Format.fprintf ppf "%s:@ %a@." s Printflambda.flambda flam;
-    try Flambdacheck.check ~current_compilation_unit flam
-    with e ->
-      Format.fprintf ppf "%a@."
-        Printflambda.flambda flam;
-      raise e in
-  let flam =
-    Closure_conversion.lambda_to_flambda
-      ~current_compilation_unit
-      ~symbol_for_global':Compilenv.symbol_for_global'
-      ~exported_fields:exported
-      lam in
-  dump_and_check "flambdagen" flam;
-  let rec loop rounds flam =
-    if rounds <= 0 then flam
-    else
-      let flam = Flambdasimplify.lift_lets flam in
-      let flam = Flambdasimplify.remove_unused_closure_variables flam in
-      let flam = Inlining.inline ~never_inline:false flam in
-      let flam = Flambdasimplify.lift_lets flam in
-      let flam = Flambdasimplify.remove_unused_closure_variables flam in
-      let flam = Flambdasimplify.separate_unused_arguments_in_closures flam in
-      let flam = Flambdasimplify.lift_set_of_closures flam in
-      let flam = Flambdasimplify.remove_unused_globals flam in
-      let flam = Inlining.inline ~never_inline:true flam in
-      let flam = Flambdasimplify.unbox_returns flam in
-      let flam = Flambdasimplify.remove_unused_closure_variables flam in
-      let flam = Ref_to_variables.eliminate_ref flam in
-      loop (rounds - 1) flam in
-  let flam = loop !Clflags.simplify_rounds flam in
-  dump_and_check "flambdasimplify" flam;
   let fl_sym =
-    Flambdasym.convert ~compilation_unit:current_compilation_unit flam in
-  let fl,const,export = fl_sym in
+    Flambdasym.convert ~compilation_unit:current_compilation_unit flam
+  in
+  let fl, const, export = fl_sym in
   Compilenv.set_export_info export;
   if !Clflags.dump_flambda
   then begin
@@ -158,10 +126,9 @@ let flambda ppf (size, exported, lam) =
           Printflambda.flambda lam)
       const
   end;
-  Flambdacheck.check ~current_compilation_unit ~flambdasym:true fl;
+  Flambdacheck.check ~flambdasym:true fl;
   Symbol.SymbolMap.iter (fun _ lam ->
-      Flambdacheck.check ~current_compilation_unit
-        ~flambdasym:true ~cmxfile:true lam)
+      Flambdacheck.check ~flambdasym:true ~cmxfile:true lam)
     const;
   fl_sym
 
@@ -172,7 +139,6 @@ let compile_unit ~sourcefile output_prefix asm_filename keep_asm obj_filename ge
     if create_asm then Emitaux.output_channel := open_out asm_filename;
     begin try
       gen ();
-      Inlining_stats.save_then_forget_decisions ~output_prefix;
       if create_asm then close_out !Emitaux.output_channel;
     with exn when create_asm ->
       close_out !Emitaux.output_channel;
@@ -188,12 +154,12 @@ let compile_unit ~sourcefile output_prefix asm_filename keep_asm obj_filename ge
     remove_file obj_filename;
     raise exn
 
-let gen_implementation ?toplevel ~sourcefile ppf (size, exported, lam) =
+let gen_implementation ?toplevel ~sourcefile ppf ~size flam =
   Emit.begin_assembly ();
-  Timings.(start (Flambda sourcefile));
-  flambda ppf (size, exported, lam)
+  Timings.(start (Flambda_backend sourcefile));
+  prep_flambda_for_export ppf flam
   ++ Clambdagen.convert
-  ++ Timings.(stop_id (Flambda sourcefile))
+  ++ Timings.(stop_id (Flambda_backend sourcefile))
   ++ clambda_dump_if ppf
   ++ Timings.(start_id (Cmm sourcefile))
   ++ Cmmgen.compunit size
@@ -217,7 +183,7 @@ let gen_implementation ?toplevel ~sourcefile ppf (size, exported, lam) =
     );
   Emit.end_assembly ()
 
-let compile_implementation ?toplevel ~sourcefile prefixname ppf ((size, exported), lam) =
+let compile_implementation ?toplevel ~sourcefile prefixname ppf ~size flam =
   let asmfile =
     if !keep_asm_file || !Emitaux.binary_backend_available
     then prefixname ^ ext_asm
@@ -225,7 +191,7 @@ let compile_implementation ?toplevel ~sourcefile prefixname ppf ((size, exported
   in
   compile_unit sourcefile prefixname asmfile !keep_asm_file (prefixname ^ ext_obj)
     (fun () ->
-       gen_implementation ?toplevel ~sourcefile ppf (size, exported, lam))
+       gen_implementation ?toplevel ~sourcefile ppf ~size flam)
 
 (* Error report *)
 

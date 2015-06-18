@@ -141,8 +141,8 @@ let no_identifier_bound_multiple_times flam =
   with Counter_example_id var ->
     Counter_example var
 
-let every_bound_variable_is_from_current_compilation_unit
-    ~current_compilation_unit flam =
+let every_bound_variable_is_from_current_compilation_unit flam =
+  let current_compilation_unit = Compilation_unit.get_current_exn () in
   let check id =
     if not (Variable.in_compilation_unit current_compilation_unit id)
     then raise (Counter_example_id id)
@@ -235,8 +235,8 @@ let no_var_within_closure_is_bound_multiple_times flam =
 
 exception Counter_example_cu of Compilation_unit.t
 
-let every_declared_closure_is_from_current_compilation_unit
-    ~current_compilation_unit flam =
+let every_declared_closure_is_from_current_compilation_unit flam =
+  let current_compilation_unit = Compilation_unit.get_current_exn () in
   let f {function_decls = { compilation_unit }} _ =
     if not (Compilation_unit.equal compilation_unit current_compilation_unit)
     then raise (Counter_example_cu compilation_unit)
@@ -303,8 +303,8 @@ let used_var_within_closure flam =
   Flambdaiter.iter f flam;
   !used
 
-let every_used_function_from_current_compilation_unit_is_declared
-    ~current_compilation_unit flam =
+let every_used_function_from_current_compilation_unit_is_declared flam =
+  let current_compilation_unit = Compilation_unit.get_current_exn () in
   let declared, _ = declared_closure_id flam in
   let used = used_closure_id flam in
   let used_from_current_unit =
@@ -318,7 +318,8 @@ let every_used_function_from_current_compilation_unit_is_declared
   else Counter_example counter_examples
 
 let every_used_var_within_closure_from_current_compilation_unit_is_declared
-    ~current_compilation_unit flam =
+      flam =
+  let current_compilation_unit = Compilation_unit.get_current_exn () in
   let declared, _ = declared_var_within_closure flam in
   let used = used_var_within_closure flam in
   let used_from_current_unit =
@@ -397,7 +398,7 @@ let test result fmt printer =
   | Counter_example ce ->
       Misc.fatal_error (Format.asprintf fmt printer ce)
 
-let check ~current_compilation_unit ?(flambdasym=false) ?(cmxfile=false) flam =
+let check ?(flambdasym=false) ?(cmxfile=false) flam =
   test (every_used_identifier_is_bound flam)
     "Unbound identifier %a" Variable.print;
 
@@ -408,8 +409,7 @@ let check ~current_compilation_unit ?(flambdasym=false) ?(cmxfile=false) flam =
   test (no_identifier_bound_multiple_times flam)
     "identifier bound multiple times %a" Variable.print;
 
-  test (every_bound_variable_is_from_current_compilation_unit
-          ~current_compilation_unit flam)
+  test (every_bound_variable_is_from_current_compilation_unit flam)
     "bound variable %a is attributed to another compilation unit"
     Variable.print;
 
@@ -424,15 +424,13 @@ let check ~current_compilation_unit ?(flambdasym=false) ?(cmxfile=false) flam =
     "function within closure %a bound multiple times"
     Closure_id.print;
 
-  test (every_declared_closure_is_from_current_compilation_unit
-          ~current_compilation_unit flam)
+  test (every_declared_closure_is_from_current_compilation_unit flam)
     "function declare using unit %a which is not the current one"
     Compilation_unit.print;
 
   if not flambdasym
   then
-    test (every_used_function_from_current_compilation_unit_is_declared
-            ~current_compilation_unit flam)
+    test (every_used_function_from_current_compilation_unit_is_declared flam)
       "functions %a from the current compilation unit are used but \
        not declared"
       Closure_id.Set.print;
@@ -440,7 +438,7 @@ let check ~current_compilation_unit ?(flambdasym=false) ?(cmxfile=false) flam =
   if not flambdasym
   then
     test (every_used_var_within_closure_from_current_compilation_unit_is_declared
-            ~current_compilation_unit flam)
+            flam)
       "variables %a from the current compilation unit are used but \
        not declared"
       Var_within_closure.Set.print;

@@ -2,6 +2,7 @@ open Abstract_identifiers
 open Simple_value_approx
 
 type t = {
+  backend : (module Backend_intf.S);
   env_approx : Simple_value_approx.t Variable.Map.t;
   current_functions : Set_of_closures_id.Set.t;
   (* The functions currently being declared: used to avoid inlining
@@ -17,8 +18,9 @@ type t = {
   inlining_stats_closure_stack : Inlining_stats.Closure_stack.t;
 }
 
-let empty ~never_inline =
-  { env_approx = Variable.Map.empty;
+let empty ~never_inline ~backend =
+  { backend;
+    env_approx = Variable.Map.empty;
     current_functions = Set_of_closures_id.Set.empty;
     inlining_level = 0;
     inside_branch = false;
@@ -30,6 +32,8 @@ let empty ~never_inline =
     inlining_stats_closure_stack =
       Inlining_stats.Closure_stack.create ();
   }
+
+let backend t = t.backend
 
 let local env =
   { env with

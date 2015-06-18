@@ -12,9 +12,7 @@
 
 open Abstract_identifiers
 
-val check :
-  current_compilation_unit:Symbol.Compilation_unit.t -> ?flambdasym:bool ->
-  ?cmxfile:bool -> 'a Flambda.t -> unit
+val check : ?flambdasym:bool -> ?cmxfile:bool -> 'a Flambda.t -> unit
 (** Run all tests, raises Fatal_error if a test fails *)
 
 type 'a counter_example =
@@ -31,8 +29,7 @@ val no_identifier_bound_multiple_times :
   'a Flambda.t -> Variable.t counter_example
 
 val every_bound_variable_is_from_current_compilation_unit :
-  current_compilation_unit:Symbol.Compilation_unit.t -> 'a Flambda.t ->
-  Variable.t counter_example
+  'a Flambda.t -> Variable.t counter_example
 
 val no_assign_on_variable_of_kind_Immutable :
   'a Flambda.t -> Variable.t counter_example
@@ -44,18 +41,15 @@ val no_closure_id_is_bound_multiple_times :
   'a Flambda.t -> Closure_id.t counter_example
 
 val every_declared_closure_is_from_current_compilation_unit :
-  current_compilation_unit:Symbol.Compilation_unit.t -> 'a Flambda.t ->
-  Symbol.Compilation_unit.t counter_example
+  'a Flambda.t -> Symbol.Compilation_unit.t counter_example
 (* Test only run when flambdasym is false *)
 
 val every_used_function_from_current_compilation_unit_is_declared :
-  current_compilation_unit:Symbol.Compilation_unit.t -> 'a Flambda.t ->
-  Closure_id.Set.t counter_example
+  'a Flambda.t -> Closure_id.Set.t counter_example
 (* Test only run when flambdasym is false *)
 
 val every_used_var_within_closure_from_current_compilation_unit_is_declared :
-  current_compilation_unit:Symbol.Compilation_unit.t -> 'a Flambda.t ->
-  Var_within_closure.Set.t counter_example
+  'a Flambda.t -> Var_within_closure.Set.t counter_example
 
 val every_static_exception_is_caught :
   'a Flambda.t -> Static_exception.t counter_example

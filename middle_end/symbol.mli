@@ -36,15 +36,13 @@ val string_of_linkage_name : linkage_name -> string
 
 (***********************************************************************)
 
-(* CXR mshinwell for pchambart: Convert to use [Identifiable]
-   pchambart: done *)
-
+(* CR mshinwell: this deserves its own source file *)
 module Compilation_unit : sig
 
   type t
   include Identifiable with type t := t
 
-  val create : string -> linkage_name -> t
+  val create : Ident.t -> linkage_name -> t
 
   val get_persistent_ident : t -> Ident.t
   val get_linkage_name : t -> linkage_name
@@ -52,6 +50,7 @@ module Compilation_unit : sig
   val set_current : t -> unit
   val get_current : unit -> t option
   val get_current_exn : unit -> t
+  val get_current_id_exn : unit -> Ident.t
 end
 
 (***********************************************************************)
@@ -68,3 +67,5 @@ module Symbol_Identifiable : Identifiable
 module SymbolSet = Symbol_Identifiable.Set
 module SymbolMap = Symbol_Identifiable.Map
 module SymbolTbl = Symbol_Identifiable.Tbl
+
+module ExportId : UnitId with module Compilation_unit := Compilation_unit

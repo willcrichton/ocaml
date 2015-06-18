@@ -45,10 +45,7 @@
 open Abstract_identifiers
 
 val lambda_to_flambda
-   : current_compilation_unit:Symbol.Compilation_unit.t
-  (* [symbol_for_global'] in the [Compilenv] sense.  Useful for unit
-     testing without relying on [Compilenv]. *)
-  -> symbol_for_global':(Ident.t -> Symbol.t)
+   : symbol_for_global':(Ident.t -> Symbol.t)
   -> exported_fields:int
   -> Lambda.lambda
   -> Expr_id.t Flambda.t

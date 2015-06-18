@@ -25,5 +25,6 @@
 *)
 val inline
    : never_inline:bool
+  -> backend:(module Backend_intf.S)
   -> Abstract_identifiers.Expr_id.t Flambda.t
   -> Abstract_identifiers.Expr_id.t Flambda.t

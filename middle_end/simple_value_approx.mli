@@ -24,7 +24,7 @@ module Tag : sig
   val to_int : t -> int
 end
 
-type 'a boxed_int = 'a Flambdaexport.boxed_int =
+type 'a boxed_int =
   | Int32 : int32 boxed_int
   | Int64 : int64 boxed_int
   | Nativeint : nativeint boxed_int
@@ -69,6 +69,11 @@ type 'a boxed_int = 'a Flambdaexport.boxed_int =
    can't prove it and needs to keep it.
 *)
 
+type value_string = {
+  contents : string option; (* None if unknown or mutable *)
+  size : int;
+}
+
 (** A value of type [t] corresponds to an approximation of a value.
     Such approximations are deduced at particular points in an expression
     tree, but may subsequently be propagated to other locations.
@@ -103,11 +108,11 @@ and descr = private
   | Value_boxed_int : 'a boxed_int * 'a -> descr
   | Value_set_of_closures of value_set_of_closures
   | Value_closure of value_closure
-  | Value_string of Flambdaexport.value_string
+  | Value_string of value_string
   | Value_float_array of int (* size *)
   | Value_unknown
   | Value_bottom
-  | Value_extern of Flambdaexport.ExportId.t
+  | Value_extern of Symbol.ExportId.t
   | Value_symbol of Symbol.t
   | Value_unresolved of Symbol.t (* No description was found for this symbol *)
   | Value_conditional of t * t
@@ -132,12 +137,14 @@ and value_set_of_closures = {
 val value_unknown : t
 val value_int : int -> t
 val value_float : float -> t
+val value_float_array : int -> t
+val value_string : int -> string option -> t
 val value_boxed_int : 'i boxed_int -> 'i -> t
 val value_constptr : int -> t
 val value_closure : value_closure -> t
 val value_set_of_closures : value_set_of_closures -> t
 val value_block : Tag.t * t array -> t
-val value_extern : Flambdaexport.ExportId.t -> t
+val value_extern : Symbol.ExportId.t -> t
 val value_symbol : Symbol.t -> t
 val value_bottom : t
 val value_unresolved : Symbol.t -> t
@@ -164,7 +171,7 @@ val known : t -> bool
 val useful : t -> bool
 
 (* A value is certainly immutable if its approximation is known and not bottom.
-   It should have been resolved (it cannot be [Value_extern] and
+   It should have been resolved (it cannot be [Value_extern] or
    [Value_symbol] *)
 val is_certainly_immutable : t -> bool
 
@@ -182,11 +189,3 @@ val check_var_and_constant_result
 val get_field : int -> t list -> t
 
 val descrs : t list -> descr list
-
-module Import : sig
-  val really_import : descr -> descr
-  val import_global : Ident.t -> t
-  val import_symbol : Symbol.t -> t
-end
-
-val really_import_approx : t -> t

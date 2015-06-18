@@ -16,10 +16,14 @@ open Abstract_identifiers
 module A = Simple_value_approx
 module E = Inlining_env
 module R = Inlining_result
+
+module Compilation_unit = Symbol.Compilation_unit
+
 let ret = R.set_approx
 
 let new_var name =
-  Variable.create ~current_compilation_unit:(Compilenv.current_unit ()) name
+  Variable.create name
+    ~current_compilation_unit:(Compilation_unit.get_current_exn ())
 
 let check_constant_result r lam approx =
   let lam, approx = A.check_constant_result lam approx in
@@ -308,12 +312,14 @@ let transform_closure_expression env r closure closure_id rel annot =
 
 let rec loop env r tree =
   let f, r = loop_direct env r tree in
-  f, ret r (A.really_import_approx (R.approx r))
+  let module Backend = (val (E.backend env) : Backend_intf.S) in
+  f, ret r (Backend.really_import_approx (R.approx r))
 
 and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
   match tree with
   | Fsymbol (sym, _annot) ->
-    check_constant_result r tree (A.Import.import_symbol sym)
+    let module Backend = (val (E.backend env) : Backend_intf.S) in
+    check_constant_result r tree (Backend.import_symbol sym)
   | Fvar (id, annot) ->
     let id = Flambdasubst.subst_var (E.sb env) id in
     let tree : _ Flambda.t = Fvar (id, annot) in
@@ -408,14 +414,18 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
     let approx =
       if Ident.is_predef_exn id
       then A.value_unknown
-      else A.Import.import_global id
+      else
+        let module Backend = (val (E.backend env) : Backend_intf.S) in
+        Backend.import_global id
     in
     expr, ret r approx
   | Fprim (Pgetglobalfield (id, i), [], _dbg, _annot) as expr ->
     let approx =
-      if id = Compilenv.current_unit_id ()
+      if id = Compilation_unit.get_current_id_exn ()
       then R.find_global r ~field_index:i
-      else A.get_field i [A.really_import_approx (A.Import.import_global id)]
+      else
+        let module Backend = (val (E.backend env) : Backend_intf.S) in
+        A.get_field i [Backend.import_global id]
     in
     check_constant_result r expr approx
   | Fprim (Psetglobalfield (ex, i), [arg], dbg, annot) as expr ->
@@ -451,8 +461,8 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
     let arg2_approx = (R.approx r) in
     let simplifier =
       match primitive with
-      | Psequand -> Flambdasimplify.sequential_and
-      | Psequor -> Flambdasimplify.sequential_or
+      | Psequand -> Simplify_sequential_logical_ops.sequential_and
+      | Psequor -> Simplify_sequential_logical_ops.sequential_or
       | _ -> assert false
     in
     let expr, approx, simplify_benefit =
@@ -474,7 +484,9 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
     let (args', approxs, r) = loop_list env r args in
     let expr = if args' == args then expr else Fprim (p, args', dbg, annot) in
     let expr, approx, benefit =
-      Flambdasimplify.primitive p (args', approxs) expr dbg
+      let module Backend = (val (E.backend env) : Backend_intf.S) in
+      Simplify_primitives.primitive p (args', approxs) expr dbg
+        ~size_int:Backend.size_int ~big_endian:Backend.big_endian
     in
     let r = R.map_benefit r (Inlining_cost.Benefit.(+) benefit) in
     expr, ret r approx
@@ -531,7 +543,7 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
        if arg is not effectful we can also drop it. *)
     let arg, r = loop env r arg in
     let foo () = match arg with
-      | Fvar(var, _) ->
+      | Fvar _ ->
             true
       | _ -> false in
 
@@ -748,9 +760,10 @@ and loop_list env r l = match l with
    variable.
 *)
 and transform_set_of_closures_expression original_env original_r cl annot =
+  let module Backend = (val (E.backend original_env) : Backend_intf.S) in
   let ffuns =
     Flambdasubst.rewrite_recursive_calls_with_symbols (E.sb original_env)
-      cl.function_decls ~make_closure_symbol:Compilenv.closure_symbol
+      cl.function_decls ~make_closure_symbol:Backend.closure_symbol
   in
   let fv = cl.free_vars in
   let env = E.increase_closure_depth original_env in
@@ -1052,7 +1065,7 @@ and inline_by_copying_function_body ~env ~r ~clos ~lfunc ~fun_id ~func ~args =
   loop (E.activate_substitution env) r
     (Flet (Immutable, clos_id, lfunc, expr, Expr_id.create ()))
 
-(* Inlining of recursive function (s) yields a copy of the functions'
+(* Inlining of recursive function(s) yields a copy of the functions'
    definitions (not just their bodies, unlike the non-recursive case) and
    a direct application of the new body.
    Note: the function really does need to be recursive (but possibly only via
@@ -1117,11 +1130,12 @@ and inline_by_copying_function_declaration ~env ~r ~funct ~clos ~fun_id ~func
   in
   Some (loop (E.activate_substitution env) r expr)
 
+(* CR mshinwell for pchambart: Change to a "-dinlining-benefit" option? *)
 let debug_benefit =
   try ignore (Sys.getenv "BENEFIT"); true
   with _ -> false
 
-let inline ~never_inline tree =
+let inline ~never_inline ~backend tree =
   let r =
     if never_inline then
       R.set_inlining_threshold (R.create ()) Inlining_cost.Never_inline
@@ -1130,21 +1144,23 @@ let inline ~never_inline tree =
   in
   let stats = !Clflags.inlining_stats in
   if never_inline then Clflags.inlining_stats := false;
-  let result, r = loop (E.empty ~never_inline:false) r tree in
+  let env = E.empty ~never_inline:false ~backend in
+  let result, r = loop env r tree in
   Clflags.inlining_stats := stats;
-  (* CR mshinwell for pchambart: Should these be fatal errors? *)
+  (* XCR mshinwell for pchambart: Should these be fatal errors?
+     pchambart: They should and they are now. *)
   if not (Variable.Set.is_empty (R.used_variables r))
   then begin
-    Format.printf "remaining variables: %a@.%a@."
+    Misc.fatal_error (Format.asprintf "remaining variables: %a@.%a@."
       Variable.Set.print (R.used_variables r)
-      Printflambda.flambda result
+      Printflambda.flambda result)
   end;
   assert (Variable.Set.is_empty (R.used_variables r));
   if not (Static_exception.Set.is_empty (R.used_staticfail r))
   then begin
-    Format.printf "remaining variables: %a@.%a@."
+    Misc.fatal_error (Format.asprintf "remaining static exceptions: %a@.%a@."
       Static_exception.Set.print (R.used_staticfail r)
-      Printflambda.flambda result
+      Printflambda.flambda result)
   end;
   assert (Static_exception.Set.is_empty (R.used_staticfail r));
   if debug_benefit then

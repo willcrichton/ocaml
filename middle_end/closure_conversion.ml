@@ -27,24 +27,25 @@ open Abstract_identifiers
   These constructions also appear in [Flambda.t].
 *)
 
+module Compilation_unit = Symbol.Compilation_unit
 module IdentSet = Lambda.IdentSet
 
 type t = {
-  current_compilation_unit : Symbol.Compilation_unit.t;
   current_unit_id : Ident.t;
   symbol_for_global' : (Ident.t -> Symbol.t);
   exported_fields : int;
 }
 
-let fresh_variable t ~name =
-  Variable.create name ~current_compilation_unit:t.current_compilation_unit
+let fresh_variable _t ~name =
+  Variable.create name
+    ~current_compilation_unit:(Compilation_unit.get_current_exn ())
 
 let create_var t id =
   let var = fresh_variable t (Ident.name id) in
   var
 
-let rename_var t ?append var =
-  let current_compilation_unit = t.current_compilation_unit in
+let rename_var _t ?append var =
+  let current_compilation_unit = Compilation_unit.get_current_exn () in
   let new_var = Variable.rename ~current_compilation_unit ?append var in
   new_var
 
@@ -479,8 +480,12 @@ let rec close t env (lam : Lambda.lambda) : _ Flambda.t =
       close t (Env.add_var env id var) body, nid ())
   | Lassign (id, lam) -> Fassign (Env.find_var env id, close t env lam, nid ())
   | Levent (lam, ev) -> add_debug_info ev (close t env lam)
-  (* CR mshinwell for pchambart: What is [Lifused] and why is this
-     [assert false]? *)
+  (* XCR mshinwell for pchambart: What is [Lifused] and why is this
+     [assert false]?
+     pchambart: [Lifused] is used to mark that this expression should be alive
+     only if an identifier is. Every uses should have been removed by
+     [Simplif.simplify_lets], either by replacing by the inner expression, or
+     by completely removing it (replacing by unit) *)
   | Lifused _ -> assert false
 
 (* Perform closure conversion on a set of function declarations, returning a
@@ -543,11 +548,12 @@ and close_functions t external_env function_declarations
         (Variable.Map.add closure_bound_var generic_function_stub map)
   in
   let fun_decls : _ Flambda.function_declarations =
-    { set_of_closures_id = Set_of_closures_id.create t.current_compilation_unit;
+    { set_of_closures_id =
+        Set_of_closures_id.create (Compilation_unit.get_current_exn ());
       funs =
         List.fold_left close_one_function Variable.Map.empty
           (Function_decls.to_list function_declarations);
-      compilation_unit = t.current_compilation_unit;
+      compilation_unit = Compilation_unit.get_current_exn ();
     }
   in
   (* The closed representation of a set of functions is a "set of closures".
@@ -651,14 +657,11 @@ and lifting_helper t ~env ~args ~name =
         Fvar (v, nid ())::args, (v, expr)::lets)
     args ([], [])
 
-let lambda_to_flambda ~current_compilation_unit
-    ~symbol_for_global'
-    ~(exported_fields:int)
-    lam =
+let lambda_to_flambda ~symbol_for_global' ~(exported_fields:int) lam =
   let t =
-    { current_compilation_unit;
-      current_unit_id =
-        Symbol.Compilation_unit.get_persistent_ident current_compilation_unit;
+    { current_unit_id =
+        Symbol.Compilation_unit.get_persistent_ident
+          (Compilation_unit.get_current_exn ());
       symbol_for_global';
       exported_fields;
     }

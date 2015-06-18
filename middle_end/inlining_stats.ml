@@ -1,5 +1,7 @@
 open Abstract_identifiers
 
+module Compilation_unit = Symbol.Compilation_unit
+
 let vim_trailer = "vim:fdm=expr:filetype=plain:\
   foldexpr=getline(v\\:lnum)=~'^\\\\s*$'&&getline(v\\:lnum+1)=~'\\\\S'?'<1'\\:1"
 
@@ -35,7 +37,7 @@ module Closure_stack = struct
   let save t ~out_channel =
     let print_elt (closure_id, _where) =
       let output =
-        let current_unit = Compilenv.current_unit () in
+        let current_unit = Compilation_unit.get_current_exn () in
         if Closure_id.in_compilation_unit current_unit closure_id then
           Closure_id.output
         else

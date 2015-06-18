@@ -17,7 +17,8 @@ open Abstract_identifiers
 open Flambda
 
 let rename_var var =
-  Variable.rename ~current_compilation_unit:(Compilenv.current_unit ()) var
+  Variable.rename var
+    ~current_compilation_unit:(Symbol.Compilation_unit.get_current_exn ())
 
 let directly_used_variables tree =
   let set = ref Variable.Set.empty in
