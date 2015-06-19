@@ -37,6 +37,8 @@ module Variable : sig
   val rename : current_compilation_unit:Symbol.Compilation_unit.t ->
     ?append:string -> t -> t
 
+  val get_compilation_unit : t -> Symbol.Compilation_unit.t
+
   val in_compilation_unit : Symbol.Compilation_unit.t -> t -> bool
 
   val unique_name : t -> string

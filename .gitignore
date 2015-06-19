@@ -339,6 +339,12 @@
 /experimental/garrigue/*.out
 /experimental/garrigue/*.out2
 
+# /middle_end/
+/middle_end/*.o
+/middle_end/*.cm[ioxatp]
+/middle_end/*.cmx[as]
+/middle_end/*.cmti
+
 # /lex/
 /lex/*.o
 /lex/*.a

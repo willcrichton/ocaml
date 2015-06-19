@@ -117,7 +117,7 @@ let prep_flambda_for_export ppf flam =
   in
   let fl, const, export = fl_sym in
   Compilenv.set_export_info export;
-  if !Clflags.dump_flambda
+  if !Clflags.dump_flambda && false
   then begin
     Format.fprintf ppf "flambdasym@ %a@." Printflambda.flambda fl;
     Symbol.SymbolMap.iter (fun sym lam ->

@@ -14,7 +14,7 @@
 let middle_end ppf ~sourcefile ~prefixname ~backend ~exported_fields lam =
   Timings.(start (Flambda_middle_end sourcefile));
   let dump_and_check s flam =
-    if !Clflags.dump_flambda
+    if !Clflags.dump_flambda && false
     then Format.fprintf ppf "%s:@ %a@." s Printflambda.flambda flam;
     try Flambdacheck.check flam
     with e ->
@@ -33,6 +33,7 @@ let middle_end ppf ~sourcefile ~prefixname ~backend ~exported_fields lam =
     if rounds <= 0 then flam
     else
       let flam = Lift_code.lift_lets flam in
+      let flam = Unbox_returns.lift_ifs flam in
       let flam =
         Remove_unused_closure_vars.remove_unused_closure_variables flam
       in
