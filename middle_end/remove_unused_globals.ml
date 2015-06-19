@@ -11,8 +11,6 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
 let used_globals id tree =
   let used = ref Ext_types.Int.Set.empty in
   Flambdaiter.iter (function
@@ -22,7 +20,7 @@ let used_globals id tree =
   !used
 
 let remove_unused_globals tree =
-  let id = Symbol.Compilation_unit.get_current_id_exn () in
+  let id = Compilation_unit.get_current_id_exn () in
   let used = used_globals id tree in
   Flambdaiter.map (function
       | Fprim(Psetglobalfield(Not_exported, pos), arg, dbg, attr)

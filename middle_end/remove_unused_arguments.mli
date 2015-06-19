@@ -11,8 +11,6 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
 (** Introduce a stub function to avoid depending on unused arguments.
 
     For instance, it turns

@@ -15,15 +15,6 @@
     This pass is designed for speed rather than accuracy; the performance
     is important since it is used heavily during inlining. *)
 
-open Abstract_identifiers
-
-module Tag : sig
-  type t
-
-  val create_exn : int -> t
-  val to_int : t -> int
-end
-
 type 'a boxed_int =
   | Int32 : int32 boxed_int
   | Int64 : int64 boxed_int
@@ -112,7 +103,7 @@ and descr = private
   | Value_float_array of int (* size *)
   | Value_unknown
   | Value_bottom
-  | Value_extern of Symbol.ExportId.t
+  | Value_extern of Export_id.t
   | Value_symbol of Symbol.t
   | Value_unresolved of Symbol.t (* No description was found for this symbol *)
   | Value_conditional of t * t
@@ -129,7 +120,7 @@ and value_set_of_closures = {
   unchanging_params : Variable.Set.t;
   specialised_args : Variable.Set.t;
   alpha_renaming :
-    Flambdasubst.Alpha_renaming_map_for_ids_and_bound_vars_of_closures.t;
+    Alpha_renaming.Ids_and_bound_vars_of_closures.t;
 }
 
 (** Smart constructors *)
@@ -144,7 +135,7 @@ val value_constptr : int -> t
 val value_closure : value_closure -> t
 val value_set_of_closures : value_set_of_closures -> t
 val value_block : Tag.t * t array -> t
-val value_extern : Symbol.ExportId.t -> t
+val value_extern : Export_id.t -> t
 val value_symbol : Symbol.t -> t
 val value_bottom : t
 val value_unresolved : Symbol.t -> t

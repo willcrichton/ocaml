@@ -11,8 +11,6 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
 (* Naming conventions used in this module:
    - All variable names containing "id" or "ident" are of type [Ident.t] or
      are collections of [Ident.t].  These refer to identifiers for the type
@@ -27,7 +25,6 @@ open Abstract_identifiers
   These constructions also appear in [Flambda.t].
 *)
 
-module Compilation_unit = Symbol.Compilation_unit
 module IdentSet = Lambda.IdentSet
 
 type t = {
@@ -41,7 +38,7 @@ let fresh_variable _t ~name =
     ~current_compilation_unit:(Compilation_unit.get_current_exn ())
 
 let create_var t id =
-  let var = fresh_variable t (Ident.name id) in
+  let var = fresh_variable t ~name:(Ident.name id) in
   var
 
 let rename_var _t ?append var =
@@ -259,7 +256,7 @@ let tupled_function_call_stub t original_params tuplified_version
   let _, body =
     List.fold_left (fun (pos, body) param ->
         let lam : _ Flambda.t =
-          Fprim (Pfield pos, [Fvar (tuple_param, nid ())],
+          Fprim (Pfield pos, [Flambda.Fvar (tuple_param, nid ())],
             Debuginfo.none, nid ())
         in
         pos + 1, Flambda.Flet (Immutable, param, lam, body, nid ()))
@@ -328,7 +325,7 @@ let rec close t env (lam : Lambda.lambda) : _ Flambda.t =
           Format.asprintf "anon-fn[%a]" Location.print_compact lev_loc
         | _ -> "anon-fn"
       in
-      fresh_variable t name
+      fresh_variable t ~name
     in
     let decl =
       Function_decl.create ~let_rec_ident:None ~closure_bound_var ~kind
@@ -342,7 +339,14 @@ let rec close t env (lam : Lambda.lambda) : _ Flambda.t =
       nid ~name:"function" ())
   | Lapply (funct, args, _loc) ->
     (* CR-someday mshinwell: the location should probably not be lost. *)
-    lift_apply_construction_to_variables t ~env ~funct ~args
+    Fapply ({
+        func = close t env funct;
+        args = close_list t env args;
+        kind = Indirect;
+        dbg = Debuginfo.none;
+        return_arity = 1;
+      },
+      nid ~name:"apply" ())
   | Lletrec (defs, body) ->
     let env =
       List.fold_right (fun (id,  _) env ->
@@ -369,7 +373,7 @@ let rec close t env (lam : Lambda.lambda) : _ Flambda.t =
          eliminate the [let rec] construction, instead producing a normal
          [Flet] that binds a set of closures containing all of the functions.
       *)
-      let set_of_closures_var = fresh_variable t "set_of_closures" in
+      let set_of_closures_var = fresh_variable t ~name:"set_of_closures" in
       let set_of_closures =
         close_functions t env (Function_decls.create function_declarations)
       in
@@ -414,7 +418,7 @@ let rec close t env (lam : Lambda.lambda) : _ Flambda.t =
   | Lprim (Pidentity, [arg]) -> close t env arg
   | Lprim (Pdirapply loc, [funct; arg])
   | Lprim (Prevapply loc, [arg; funct]) ->
-    close t env (Lapply (funct, [arg], loc))
+    close t env (Lambda.Lapply (funct, [arg], loc))
   | Lprim (Praise kind, [Levent (arg, event)]) ->
     Fprim (Praise kind, [close t env arg], Debuginfo.from_raise event, nid ())
   | Lprim (Pfield i, [Lprim (Pgetglobal id, [])])
@@ -434,8 +438,6 @@ let rec close t env (lam : Lambda.lambda) : _ Flambda.t =
     assert (not (Ident.same id t.current_unit_id));
     let symbol = t.symbol_for_global' id in
     Fsymbol (symbol, nid ~name:"external_global" ())
-  | Lprim (Pmakeblock _ as primitive, args) ->
-    lift_block_construction_to_variables t ~env ~primitive ~args
   | Lprim (p, args) ->
     Fprim (p, close_list t env args, Debuginfo.none, nid ~name:"prim" ())
   | Lswitch (arg, sw) ->
@@ -577,7 +579,9 @@ and close_functions t external_env function_declarations
 and close_list t sb l = List.map (close t sb) l
 
 (* Ensure that [let] and [let rec]-bound functions have appropriate names. *)
-and close_let_bound_expression t ?let_rec_ident let_bound_var env = function
+and close_let_bound_expression t ?let_rec_ident let_bound_var env
+      (lam : Lambda.lambda) : _ Flambda.t =
+  match lam with
   | Lfunction (kind, params, body) ->
     let closure_bound_var = rename_var t let_bound_var in
     let decl =
@@ -593,84 +597,15 @@ and close_let_bound_expression t ?let_rec_ident let_bound_var env = function
   | lam ->
     close t env lam
 
-(* Transform a [Pmakeblock] operation, that allocates and fills a new block,
-   to a sequence of [let]s.  The aim is to then eliminate the allocation of
-   the block, so long as it does not escape.  For example,
-
-     Pmakeblock [expr_0; ...; expr_n]
-
-   is transformed to:
-
-     let x_0 = expr_0 in
-     ...
-     let x_n = expr_n in
-     Pmakeblock [x_0; ...; x_n]
-
-   A more general solution would be to convert completely to ANF.
-*)
-and lift_block_construction_to_variables t ~env ~primitive ~args =
-  let block_fields, lets = lifting_helper t ~env ~args ~name:"block_field" in
-  let block : _ Flambda.t =
-    Fprim (primitive, block_fields, Debuginfo.none, nid ~name:"block" ())
-  in
-  List.fold_left (fun body (v, expr) ->
-      Flambda.Flet (Immutable, v, expr, body, nid ()))
-    block lets
-
-(* Enforce right-to-left evaluation of function arguments by lifting the
-   expressions computing the arguments into [let]s. *)
-and lift_apply_construction_to_variables t ~env ~funct ~args =
-  let apply_args, lets = lifting_helper t ~env ~args ~name:"apply_arg" in
-  let apply : _ Flambda.t =
-    Fapply ({
-        func = close t env funct;
-        args = apply_args;
-        kind = Indirect;
-        dbg = Debuginfo.none;
-        return_arity = 1;
-      },
-      nid ~name:"apply" ())
-  in
-  List.fold_left (fun body (v, expr) ->
-      Flambda.Flet (Immutable, v, expr, body, nid ()))
-    apply lets
-
-and lifting_helper t ~env ~args ~name =
-  List.fold_right (fun lam (args, lets) ->
-      match close t env lam with
-      | Fvar (_v, _) as e ->
-        (* Assumes that [v] is an immutable variable, otherwise this may
-           change the evaluation order. *)
-        (* XCR mshinwell for pchambart: Please justify why [v] is always
-           immutable.
-           pchambart: My bad, this is not the case. I was
-           convinced i did remove the reference to variable optimisation from
-           Simplif.simplif and this is not the case (this is better done by
-           Ref_to_variables).
-           We could either remove the optimisation in Simplif in case of native code
-           and add an assert requiring that no mutable variables here (in the Let case)
-           or get rid of this one that will be done in the end by the first inlining
-           pass. *)
-        e::args, lets
-      | expr ->
-        let v = fresh_variable t name in
-        Fvar (v, nid ())::args, (v, expr)::lets)
-    args ([], [])
-
-let lambda_to_flambda ~symbol_for_global' ~(exported_fields:int) lam =
+let lambda_to_flambda ~backend ~(exported_fields:int) lam =
+  let module Backend = (val backend : Backend_intf.S) in
   let t =
     { current_unit_id =
-        Symbol.Compilation_unit.get_persistent_ident
+        Compilation_unit.get_persistent_ident
           (Compilation_unit.get_current_exn ());
-      symbol_for_global';
+      symbol_for_global' = Backend.symbol_for_global';
       exported_fields;
     }
   in
-  (* Strings are the only expressions that can't be duplicated without
-     changing the semantics.  So we lift them to the toplevel to avoid
-     having to handle special cases later.
-     There is no runtime cost to this transformation: strings are
-     constants and will not appear in closures. *)
-  let lam = Lift_strings.lift_strings_to_toplevel lam in
   let flam = close t Env.empty lam in
   flam

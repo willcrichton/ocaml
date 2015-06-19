@@ -11,8 +11,6 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
 let no_effects_prim (prim : Lambda.primitive) =
   match prim with
   | Pccall { prim_name =
@@ -64,7 +62,7 @@ let rec no_effects (flam : _ Flambda.t) =
   | Fstaticraise _ -> false
   | Funreachable _ -> true
 
-let sequence l1 (l2 : _ Flambda.t) annot : _ Flambda.t =
+let sequence (l1 : _ Flambda.t) (l2 : _ Flambda.t) annot : _ Flambda.t =
   if no_effects l1 then
     l2
   else

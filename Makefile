@@ -104,6 +104,7 @@ ASMCOMP=\
   asmcomp/cmm.cmo asmcomp/printcmm.cmo \
   asmcomp/reg.cmo asmcomp/mach.cmo asmcomp/proc.cmo \
   asmcomp/clambda.cmo asmcomp/printclambda.cmo \
+  asmcomp/flambdaexport_types.cmo \
   asmcomp/flambdaexport.cmo \
   asmcomp/compilenv.cmo \
   asmcomp/import_approx.cmo \
@@ -125,10 +126,20 @@ ASMCOMP=\
   driver/opterrors.cmo driver/optcompile.cmo
 
 MIDDLE_END=\
+  middle_end/tag.cmo \
+  middle_end/linkage_name.cmo \
+  middle_end/compilation_unit.cmo \
+  middle_end/variable.cmo \
+  middle_end/set_of_closures_id.cmo \
+  middle_end/closure_element.cmo \
+  middle_end/closure_id.cmo \
+  middle_end/var_within_closure.cmo \
+  middle_end/expr_id.cmo \
+  middle_end/static_exception.cmo \
+  middle_end/export_id.cmo \
   middle_end/symbol.cmo \
-  middle_end/abstract_identifiers.cmo \
   middle_end/flambdaiter.cmo \
-  middle_end/flambdasubst.cmo \
+  middle_end/alpha_renaming.cmo \
   middle_end/flambdautils.cmo \
   middle_end/invariant_params.cmo \
   middle_end/printflambda.cmo \

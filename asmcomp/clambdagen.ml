@@ -1,23 +1,17 @@
-(***********************************************************************)
-(*                                                                     *)
-(*                                OCaml                                *)
-(*                                                                     *)
-(*                     Pierre Chambart, OCamlPro                       *)
-(*                                                                     *)
-(*  Copyright 2014 Institut National de Recherche en Informatique et   *)
-(*  en Automatique.  All rights reserved.  This file is distributed    *)
-(*  under the terms of the Q Public License version 1.0.               *)
-(*                                                                     *)
-(***********************************************************************)
+(**************************************************************************)
+(*                                                                        *)
+(*                                OCaml                                   *)
+(*                                                                        *)
+(*                       Pierre Chambart, OCamlPro                        *)
+(*                  Mark Shinwell, Jane Street Europe                     *)
+(*                                                                        *)
+(*   Copyright 2015 Institut National de Recherche en Informatique et     *)
+(*   en Automatique.  All rights reserved.  This file is distributed      *)
+(*   under the terms of the Q Public License version 1.0.                 *)
+(*                                                                        *)
+(**************************************************************************)
 
-open Misc
-open Symbol
-open Abstract_identifiers
-open Lambda
-open Clambda
-open Flambda
-
-module Symbol_SCC = Sort_connected_components.Make(Symbol_Identifiable)
+module Symbol_SCC = Sort_connected_components.Make (Symbol)
 
 type ('a,'b) declaration_position =
   | Local of 'a
@@ -26,7 +20,8 @@ type ('a,'b) declaration_position =
 
 let list_closures expr constants =
   let closures = ref Closure_id.Map.empty in
-  let aux expr = match expr with
+  let aux (expr : _ Flambda.t) =
+    match expr with
     | Fset_of_closures ({ function_decls = functs; }, _) ->
         let add off_id _ map =
           Closure_id.Map.add
@@ -36,13 +31,14 @@ let list_closures expr constants =
     | _ -> ()
   in
   Flambdaiter.iter aux expr;
-  SymbolMap.iter (fun _ flam -> Flambdaiter.iter aux flam) constants;
+  Symbol.Map.iter (fun _ flam -> Flambdaiter.iter aux flam) constants;
   !closures
 
 let reexported_offset extern_fun_offset_table extern_fv_offset_table expr constants =
   let set_fun = ref Closure_id.Set.empty in
   let set_fv = ref Var_within_closure.Set.empty in
-  let aux expr = match expr with
+  let aux (expr : _ Flambda.t) =
+    match expr with
     | Fvar_within_closure({var = env_var; closure_id = env_fun_id}, _) ->
         set_fun := Closure_id.Set.add env_fun_id !set_fun;
         set_fv := Var_within_closure.Set.add env_var !set_fv;
@@ -54,7 +50,7 @@ let reexported_offset extern_fun_offset_table extern_fv_offset_table expr consta
     | _ -> ()
   in
   Flambdaiter.iter aux expr;
-  SymbolMap.iter (fun _ flam -> Flambdaiter.iter aux flam) constants;
+  Symbol.Map.iter (fun _ flam -> Flambdaiter.iter aux flam) constants;
   let f extern_map offset new_map =
     try
       Closure_id.Map.add offset (Closure_id.Map.find offset extern_map) new_map
@@ -74,13 +70,13 @@ let structured_constant_label expected_symbol ~shared cst =
   | None ->
       Compilenv.new_structured_constant cst ~shared
   | Some sym ->
-      let lbl = string_of_linkage_name sym.sym_label in
+      let lbl = Linkage_name.to_string (Symbol.label sym) in
       Compilenv.add_structured_constant lbl cst ~shared
 
 module type Param1 = sig
   type t
   val expr : t Flambda.t
-  val constants : t Flambda.t SymbolMap.t
+  val constants : t Flambda.t Symbol.Map.t
 end
 
 module Offsets(P:Param1) = struct
@@ -100,12 +96,13 @@ module Offsets(P:Param1) = struct
      closure *)
   let fv_offset_table = ref Var_within_closure.Map.empty
 
-  let rec iter = function
+  let rec iter (flam : _ Flambda.t) =
+    match flam with
     | Fset_of_closures({function_decls = funct; free_vars = fv}, _) ->
-        iter_closure funct fv
+      iter_closure funct fv
     | _ -> ()
 
-  and iter_closure functs fv =
+  and iter_closure (functs : _ Flambda.function_declarations) fv =
 
     let funct = Variable.Map.bindings functs.funs in
     let fv = Variable.Map.bindings fv in
@@ -139,12 +136,14 @@ module Offsets(P:Param1) = struct
     fun_offset_table := fun_offset;
     fv_offset_table := fv_offset;
 
-    List.iter (fun (_,{body}) -> Flambdaiter.iter_toplevel iter body) funct
+    List.iter (fun (_, ({body} : _ Flambda.function_declaration)) ->
+        Flambdaiter.iter_toplevel iter body)
+      funct
 
   let res =
     let run flam = Flambdaiter.iter_toplevel iter flam in
     run P.expr;
-    SymbolMap.iter (fun _ -> run) P.constants;
+    Symbol.Map.iter (fun _ -> run) P.constants;
     !fun_offset_table, !fv_offset_table
 
 end
@@ -181,15 +180,15 @@ module Conv(P:Param2) = struct
   (* offsets of functions and free variables in closures comming from
      a linked module *)
   let extern_fun_offset_table =
-    (Compilenv.approx_env ()).Flambdaexport.ex_offset_fun
+    (Compilenv.approx_env ()).Flambdaexport_types.ex_offset_fun
   let extern_fv_offset_table =
-    (Compilenv.approx_env ()).Flambdaexport.ex_offset_fv
+    (Compilenv.approx_env ()).Flambdaexport_types.ex_offset_fv
   let ex_closures =
-    (Compilenv.approx_env ()).Flambdaexport.ex_functions_off
+    (Compilenv.approx_env ()).Flambdaexport_types.ex_functions_off
   let ex_functions =
-    (Compilenv.approx_env ()).Flambdaexport.ex_functions
+    (Compilenv.approx_env ()).Flambdaexport_types.ex_functions
   let ex_constant_closures =
-    (Compilenv.approx_env ()).Flambdaexport.ex_constant_closures
+    (Compilenv.approx_env ()).Flambdaexport_types.ex_constant_closures
 
   let get_fun_offset off =
     try
@@ -197,13 +196,14 @@ module Conv(P:Param2) = struct
       then Closure_id.Map.find off fun_offset_table
       else Closure_id.Map.find off extern_fun_offset_table
     with Not_found ->
-      fatal_error (Format.asprintf "missing offset %a" Closure_id.print off)
+      Misc.fatal_error
+        (Format.asprintf "missing offset %a" Closure_id.print off)
 
   let get_fv_offset off =
     if Var_within_closure.in_compilation_unit (Compilenv.current_unit ()) off
     then
       if not (Var_within_closure.Map.mem off fv_offset_table)
-      then fatal_error (Format.asprintf "env field offset not found: %a\n%!"
+      then Misc.fatal_error (Format.asprintf "env field offset not found: %a\n%!"
                           Var_within_closure.print off)
       else Var_within_closure.Map.find off fv_offset_table
     else Var_within_closure.Map.find off extern_fv_offset_table
@@ -229,7 +229,7 @@ module Conv(P:Param2) = struct
     | External { set_of_closures_id } ->
         Set_of_closures_id.Set.mem set_of_closures_id ex_constant_closures
     | Not_declared ->
-        fatal_error (Format.asprintf "missing closure %a"
+        Misc.fatal_error (Format.asprintf "missing closure %a"
                        Closure_id.print cf)
 
   let is_closure_constant fid =
@@ -239,11 +239,11 @@ module Conv(P:Param2) = struct
     | External { set_of_closures_id } ->
         Set_of_closures_id.Set.mem set_of_closures_id ex_constant_closures
     | Not_declared ->
-        fatal_error (Format.asprintf "missing closure %a"
+        Misc.fatal_error (Format.asprintf "missing closure %a"
                        Set_of_closures_id.print fid)
 
   type env =
-    { subst : ulambda Variable.Map.t;
+    { subst : Clambda.ulambda Variable.Map.t;
       var : Ident.t Variable.Map.t;
       toplevel : bool }
 
@@ -262,7 +262,9 @@ module Conv(P:Param2) = struct
     let id = Variable.unique_ident var in
     id, { env with var = Variable.Map.add var id env.var }
 
-  let rec conv ?(expected_symbol:Symbol.t option) (env : env) = function
+  let rec conv ?(expected_symbol:Symbol.t option) (env : env)
+        (flam : _ Flambda.t) : Clambda.ulambda =
+    match flam with
     | Fvar (var,_) ->
         begin
           (* If the variable is a recursive access to the function
@@ -273,13 +275,16 @@ module Conv(P:Param2) = struct
           with Not_found ->
             try Uvar (find_var var env)
             with Not_found ->
-              fatal_error
+              Misc.fatal_error
                 (Format.asprintf "Clambdagen.conv: unbound variable %a@."
                    Variable.print var)
         end
 
     | Fsymbol (sym,_) ->
-        let lbl = Compilenv.cannonical_symbol (string_of_linkage_name sym.sym_label) in
+        let lbl =
+          Compilenv.canonical_symbol
+            (Linkage_name.to_string (Symbol.label sym))
+        in
         Uconst (Uconst_ref
                   (* Should delay the conversion a bit more *)
                   (lbl, None))
@@ -332,7 +337,7 @@ module Conv(P:Param2) = struct
         Ugeneric_apply(conv env funct, conv_list env args, dbg)
 
     | Fswitch(arg, sw, d) ->
-        let aux () =
+        let aux () : Clambda.ulambda =
           let const_index, const_actions =
             conv_switch env sw.consts sw.numconsts sw.failaction
           and block_index, block_actions =
@@ -343,7 +348,8 @@ module Conv(P:Param2) = struct
                    us_index_blocks = block_index;
                    us_actions_blocks = block_actions})
         in
-        let rec simple_expr = function
+        let rec simple_expr (flam : _ Flambda.t) =
+          match flam with
           | Fconst( Fconst_base (Asttypes.Const_string _), _ ) -> false
           | Fvar _ | Fsymbol _ | Fconst _ -> true
           | Fstaticraise (_,args,_) -> List.for_all simple_expr args
@@ -357,8 +363,12 @@ module Conv(P:Param2) = struct
           when List.for_all simple_expr args -> aux ()
         | Some failaction ->
           let exn = Static_exception.create () in
-          let sw = { sw with failaction = Some (Fstaticraise (exn, [], d)) } in
-          let expr =
+          let sw =
+            { sw with
+              failaction = Some (Flambda.Fstaticraise (exn, [], d));
+            }
+          in
+          let expr : _ Flambda.t =
             Fstaticcatch(exn, [], Fswitch(arg, sw, d), failaction, d)
           in
           conv env expr
@@ -376,13 +386,13 @@ module Conv(P:Param2) = struct
     | Fprim(Pgetglobalfield(id,i), l, dbg, _) ->
         assert(l = []);
         Uprim(Pfield i,
-              [Uprim(Pgetglobal (Ident.create_persistent
+              [Clambda.Uprim(Pgetglobal (Ident.create_persistent
                                    (Compilenv.symbol_for_global id)), [], dbg)],
               dbg)
 
     | Fprim(Psetglobalfield (_ex, i), [arg], dbg, _) ->
         Uprim(Psetfield (i,false),
-              [Uprim(Pgetglobal (Ident.create_persistent
+              [Clambda.Uprim(Pgetglobal (Ident.create_persistent
                                    (Compilenv.make_symbol None)), [], dbg);
                conv env arg],
               dbg)
@@ -393,7 +403,7 @@ module Conv(P:Param2) = struct
         | None ->
             Uprim(p, args, dbg)
         | Some l ->
-            let cst = Uconst_block (tag,l) in
+            let cst = Clambda.Uconst_block (tag,l) in
             let lbl = structured_constant_label expected_symbol ~shared:true cst in
             Uconst(Uconst_ref (lbl, Some (cst)))
         end
@@ -468,23 +478,25 @@ module Conv(P:Param2) = struct
     | [| |] -> [| |], [| |] (* May happen when default is None *)
     | _     -> index, actions
 
-  and conv_direct_apply ufunct args direct_func return_arity dbg env =
+  and conv_direct_apply ufunct args direct_func return_arity dbg env : Clambda.ulambda =
     let closed = is_function_constant direct_func in
     let label = Compilenv.function_label direct_func in
     let uargs =
       let uargs = conv_list env args in
       if closed then uargs else uargs @ [ufunct] in
 
-    let apply = Udirect_apply(label, uargs, return_arity, dbg) in
+    let apply = Clambda.Udirect_apply(label, uargs, return_arity, dbg) in
 
     (* This is usualy sufficient to detect closure with side effects *)
-    let rec no_effect = function
+    let rec no_effect (ulam : Clambda.ulambda) =
+      match ulam with
       | Uvar _ | Uconst _ | Uprim(Pgetglobalfield _, _, _)
       | Uprim(Pgetglobal _, _, _) -> true
       | Uprim(Pfield _, [arg], _) -> no_effect arg
       | _ -> false in
 
-    let no_effect = function
+    let no_effect (ulam : Clambda.ulambda) =
+      match ulam with
       | Uclosure _ ->
           (* if the function is closed, then it is a Uconst otherwise,
              we do not call this function *)
@@ -497,7 +509,8 @@ module Conv(P:Param2) = struct
     then Usequence(ufunct, apply)
     else apply
 
-  and conv_closure env functs fv ~expected_symbol =
+  and conv_closure env (functs : _ Flambda.function_declarations) fv
+        ~expected_symbol : Clambda.ulambda =
     (* Make the susbtitutions for variables bound by the closure:
        the variables bounds are the functions inside the closure and
        the free variables of the functions.
@@ -550,12 +563,13 @@ module Conv(P:Param2) = struct
           Compilenv.new_const_symbol ()
       | Some sym ->
           (* should delay conversion *)
-          string_of_linkage_name sym.sym_label
+          Linkage_name.to_string (Symbol.label sym)
     in
 
     let fv_ulam = List.map (fun (id,lam) -> id,conv env lam) fv in
 
-    let conv_function (id,func) =
+    let conv_function (id, (func : _ Flambda.function_declaration))
+          : Clambda.ufunction =
       let cf = Closure_id.wrap id in
       (* adds variables from the closure to the substitution environment *)
       let fun_offset = Closure_id.Map.find cf fun_offset_table in
@@ -574,7 +588,7 @@ module Conv(P:Param2) = struct
               let var_offset = Var_within_closure.Map.find
                   (Var_within_closure.wrap id) fv_offset_table in
               let pos = var_offset - fun_offset in
-              add_sb id (Uprim(Pfield pos, [Uvar env_var], Debuginfo.none)) env
+              add_sb id (Uprim(Pfield pos, [Clambda.Uvar env_var], Debuginfo.none)) env
           | No_lbl
           | Lbl _ -> env
         in
@@ -589,7 +603,7 @@ module Conv(P:Param2) = struct
         else
           let add_offset_subst pos env (id,_) =
             let offset = Closure_id.Map.find (Closure_id.wrap id) fun_offset_table in
-            let exp = Uoffset(Uvar env_var, offset - pos) in
+            let exp : Clambda.ulambda = Uoffset(Uvar env_var, offset - pos) in
             add_sb id exp env in
           List.fold_left (add_offset_subst fun_offset) env funct
       in
@@ -599,11 +613,14 @@ module Conv(P:Param2) = struct
             let id, env = add_unique_ident var env in
             env, id :: params) func.params (env, []) in
 
-      { Clambda.label = Compilenv.function_label cf;
+      { Clambda.
+        label = Compilenv.function_label cf;
         arity = Flambdautils.function_arity func;
         params = if closed then params else params @ [env_var];
         body = conv env_body func.body;
-        dbg = func.dbg } in
+        dbg = func.dbg;
+      }
+    in
 
     let ufunct = List.map conv_function funct in
 
@@ -612,17 +629,20 @@ module Conv(P:Param2) = struct
       match constant_list (List.map snd fv_ulam) with
       | None -> assert false
       | Some fv_const ->
-          let cst = Uconst_closure (ufunct, closure_lbl, fv_const) in
-          let closure_lbl = Compilenv.add_structured_constant closure_lbl cst ~shared:true in
+          let cst : Clambda.ustructured_constant =
+            Uconst_closure (ufunct, closure_lbl, fv_const)
+          in
+          let closure_lbl =
+            Compilenv.add_structured_constant closure_lbl cst ~shared:true
+          in
           Uconst(Uconst_ref (closure_lbl, Some cst))
     else
       Uclosure (ufunct, List.map snd fv_ulam)
 
   and conv_list env l = List.map (conv env) l
 
-  and conv_const expected_symbol cst =
-    let open Asttypes in
-    let str ~shared cst =
+  and conv_const expected_symbol (cst : Flambda.const) : Clambda.uconstant =
+    let str ~shared cst : Clambda.uconstant =
       let name = structured_constant_label expected_symbol ~shared cst in
       Uconst_ref (name, Some cst)
     in
@@ -649,7 +669,8 @@ module Conv(P:Param2) = struct
         str ~shared:true (Uconst_string c)
 
   and constant_list l =
-    let rec aux acc = function
+    let rec aux acc (ulams : Clambda.ulambda list) =
+      match ulams with
       | [] ->
           Some (List.rev acc)
       | Uconst(v) :: q ->
@@ -658,28 +679,32 @@ module Conv(P:Param2) = struct
     in
     aux [] l
 
-  and constant_label : ulambda -> const_lbl = function
+  and constant_label : Clambda.ulambda -> const_lbl = function
     | Uconst(Uconst_int _ | Uconst_ptr _) -> No_lbl
     | Uconst(Uconst_ref (lbl, _)) -> Lbl lbl
     | Uprim(Pgetglobal id, [], _) ->
         Lbl (Ident.name id)
     | _ -> Not_const
 
-  let structured_constant_for_symbol sym = function
+  let structured_constant_for_symbol sym (ulam : Clambda.ulambda) =
+    match ulam with
     | Uconst(Uconst_ref (lbl', Some cst)) ->
-        let lbl = Compilenv.cannonical_symbol (string_of_linkage_name sym.sym_label) in
-        assert(lbl = Compilenv.cannonical_symbol lbl');
+        let lbl =
+          Compilenv.canonical_symbol
+            (Linkage_name.to_string (Symbol.label sym))
+        in
+        assert(lbl = Compilenv.canonical_symbol lbl');
         cst
     (* | Uconst(Uconst_ref(None, Some cst)) -> cst *)
     | _ -> assert false
 
   let symbol_dependency existing expr =
-    let r = ref SymbolSet.empty in
+    let r = ref Symbol.Set.empty in
     Flambdaiter.iter
       (function
         | Fsymbol (sym,_) ->
-            if SymbolMap.mem sym existing
-            then r := SymbolSet.add sym !r
+            if Symbol.Map.mem sym existing
+            then r := Symbol.Set.add sym !r
         | _ -> ())
       expr;
     !r
@@ -706,24 +731,24 @@ module Conv(P:Param2) = struct
 
   let constants =
     let symbol_dependency_map =
-      SymbolMap.map (fun expr -> symbol_dependency P.constants expr)
+      Symbol.Map.map (fun expr -> symbol_dependency P.constants expr)
         P.constants
     in
     let sorted_symbols =
       List.flatten
         (List.map (function
              | Symbol_SCC.Has_loop l -> l
-             | No_loop v -> [v])
+             | Symbol_SCC.No_loop v -> [v])
             (List.rev
                (Array.to_list
                   (Symbol_SCC.connected_components_sorted_from_roots_to_leaf
                      symbol_dependency_map))))
     in
     List.fold_left (fun acc sym ->
-        let lam = SymbolMap.find sym P.constants in
+        let lam = Symbol.Map.find sym P.constants in
         let ulam = conv { empty_env with toplevel = true } ~expected_symbol:sym lam in
-        SymbolMap.add sym (structured_constant_for_symbol sym ulam) acc)
-      SymbolMap.empty sorted_symbols
+        Symbol.Map.add sym (structured_constant_for_symbol sym ulam) acc)
+      Symbol.Map.empty sorted_symbols
 
   let res = conv { empty_env with toplevel = true } P.expr
 
@@ -731,40 +756,41 @@ end
 
 let convert (type a)
     ((expr:a Flambda.t),
-     (constants:a Flambda.t SymbolMap.t),
+     (constants:a Flambda.t Symbol.Map.t),
      exported) =
   let closures = list_closures expr constants in
   let module P1 = struct
     type t = a
     let expr = expr
     let constants = constants
-    let constant_closures = exported.Flambdaexport.ex_constant_closures
+    let constant_closures = exported.Flambdaexport_types.ex_constant_closures
   end in
   let fun_offset_table, fv_offset_table =
     let module O = Offsets(P1) in
     O.res
   in
   let extern_fun_offset_table =
-    (Compilenv.approx_env ()).Flambdaexport.ex_offset_fun in
+    (Compilenv.approx_env ()).Flambdaexport_types.ex_offset_fun in
   let extern_fv_offset_table =
-    (Compilenv.approx_env ()).Flambdaexport.ex_offset_fv in
+    (Compilenv.approx_env ()).Flambdaexport_types.ex_offset_fv in
   let add_ext_offset_fun, add_ext_offset_fv =
     reexported_offset extern_fun_offset_table extern_fv_offset_table expr constants in
   let module P2 = struct include P1
     let fun_offset_table = fun_offset_table
     let fv_offset_table = fv_offset_table
     let closures = closures
-    let functions = exported.Flambdaexport.ex_functions
+    let functions = exported.Flambdaexport_types.ex_functions
   end in
   let module C = Conv(P2) in
-  let export = let open Flambdaexport in
+  let export : Flambdaexport_types.exported =
     { exported with
       ex_offset_fun = add_ext_offset_fun fun_offset_table;
-      ex_offset_fv = add_ext_offset_fv fv_offset_table }
+      ex_offset_fv = add_ext_offset_fv fv_offset_table;
+    }
   in
   Compilenv.set_export_info export;
-  SymbolMap.iter (fun sym _cst ->
-       let lbl = string_of_linkage_name sym.sym_label in
+  Symbol.Map.iter (fun sym _cst ->
+       let lbl = Linkage_name.to_string (Symbol.label sym) in
        Compilenv.add_exported_constant lbl)
     C.constants;
   C.res

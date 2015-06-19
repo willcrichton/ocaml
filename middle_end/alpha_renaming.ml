@@ -1,30 +1,28 @@
-(***********************************************************************)
-(*                                                                     *)
-(*                                OCaml                                *)
-(*                                                                     *)
-(*                     Pierre Chambart, OCamlPro                       *)
-(*                                                                     *)
-(*  Copyright 2014 Institut National de Recherche en Informatique et   *)
-(*  en Automatique.  All rights reserved.  This file is distributed    *)
-(*  under the terms of the Q Public License version 1.0.               *)
-(*                                                                     *)
-(***********************************************************************)
-
-open Symbol
-open Abstract_identifiers
-open Flambda
+(**************************************************************************)
+(*                                                                        *)
+(*                                OCaml                                   *)
+(*                                                                        *)
+(*                       Pierre Chambart, OCamlPro                        *)
+(*                  Mark Shinwell, Jane Street Europe                     *)
+(*                                                                        *)
+(*   Copyright 2015 Institut National de Recherche en Informatique et     *)
+(*   en Automatique.  All rights reserved.  This file is distributed      *)
+(*   under the terms of the Q Public License version 1.0.                 *)
+(*                                                                        *)
+(**************************************************************************)
 
 type tbl = {
   sb_var : Variable.t Variable.Map.t;
   sb_exn : Static_exception.t Static_exception.Map.t;
+  (* Used to handle substitution sequences: we cannot call the substitution
+     recursively because there can be name clashes. *)
   back_var : Variable.t list Variable.Map.t;
-  (* Used to handle substitution sequence: we cannot call
-     the substitution recursively because there can be name
-     clash *)
 }
+
 type t =
   | Inactive
   | Active of tbl
+
 type subst = t
 
 let empty_tbl = {
@@ -113,7 +111,8 @@ let subst_var t var =
      try Variable.Map.find var t.sb_var with
      | Not_found -> var
 
-let rewrite_recursive_calls_with_symbols t function_declarations
+let rewrite_recursive_calls_with_symbols t
+      (function_declarations : _ Flambda.function_declarations)
       ~make_closure_symbol =
   match t with
   | Inactive -> function_declarations
@@ -121,14 +120,14 @@ let rewrite_recursive_calls_with_symbols t function_declarations
     let closure_symbols = Variable.Map.fold (fun id _ map ->
         let cf = Closure_id.wrap id in
         let sym = make_closure_symbol cf in
-        SymbolMap.add sym id map)
-        function_declarations.funs SymbolMap.empty in
-    let funs = Variable.Map.map (fun ffun ->
+        Symbol.Map.add sym id map)
+        function_declarations.funs Symbol.Map.empty in
+    let funs = Variable.Map.map (fun (ffun : _ Flambda.function_declaration) ->
         let body =
           Flambdaiter.map_toplevel
             (function
-              | Fsymbol (sym,_) when SymbolMap.mem sym closure_symbols ->
-                Fvar(SymbolMap.find sym closure_symbols,Expr_id.create ())
+              | Fsymbol (sym,_) when Symbol.Map.mem sym closure_symbols ->
+                Fvar(Symbol.Map.find sym closure_symbols,Expr_id.create ())
               | e -> e)
             ffun.body in
         { ffun with body })
@@ -138,7 +137,8 @@ let rewrite_recursive_calls_with_symbols t function_declarations
 
 let toplevel_substitution sb tree =
   let sb v = try Variable.Map.find v sb with Not_found -> v in
-  let aux = function
+  let aux (flam : _ Flambda.t) : _ Flambda.t =
+    match flam with
     | Fvar (id,e) -> Fvar (sb id,e)
     | Fassign (id,e,d) -> Fassign (sb id,e,d)
     | Fset_of_closures (cl,d) ->
@@ -150,7 +150,8 @@ let toplevel_substitution sb tree =
   in
   Flambdaiter.map_toplevel aux tree
 
-module Alpha_renaming_map_for_ids_and_bound_vars_of_closures = struct
+module Ids_and_bound_vars_of_closures = struct
+  type inactive_or_active = t
 
   type t =
     { ffs_fv : Var_within_closure.t Var_within_closure.Map.t;
@@ -196,11 +197,13 @@ module Alpha_renaming_map_for_ids_and_bound_vars_of_closures = struct
 
       subst_free_vars must have been used to build off_sb
    *)
-  let ffuns_subst t subst ffuns =
+  let ffuns_subst t (subst : inactive_or_active)
+        (ffuns : _ Flambda.function_declarations) =
     match subst with
     | Inactive -> ffuns, subst, t
     | Active subst ->
-      let subst_ffunction _fun_id ffun subst =
+      let subst_ffunction _fun_id (ffun : _ Flambda.function_declaration)
+            subst =
         let params, subst = active_new_subst_ids' subst ffun.params in
         let free_variables =
           Variable.Set.fold (fun id set ->
@@ -228,7 +231,8 @@ module Alpha_renaming_map_for_ids_and_bound_vars_of_closures = struct
             funs, subst)
           ffuns.funs (Variable.Map.empty, subst) in
       let current_unit = Compilation_unit.get_current_exn () in
-      { set_of_closures_id = Set_of_closures_id.create current_unit;
+      { Flambda.
+        set_of_closures_id = Set_of_closures_id.create current_unit;
         compilation_unit = current_unit;
         funs }, Active subst, t
 

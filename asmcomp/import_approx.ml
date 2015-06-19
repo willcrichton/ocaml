@@ -11,65 +11,59 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
 module A = Simple_value_approx
 
-module SymbolTbl = Symbol.SymbolTbl
-module SymbolMap = Symbol.SymbolMap
-
-let reexported_missing_symbols = SymbolTbl.create 0
+let reexported_missing_symbols = Symbol.Tbl.create 0
 
 let rec import_ex ex =
-  ignore (Compilenv.approx_for_global (Symbol.ExportId.unit ex));
+  ignore (Compilenv.approx_for_global (Export_id.unit ex));
   let ex_info = Compilenv.approx_env () in
   try match Flambdaexport.find_description ex ex_info with
     | Value_int i -> A.value_int i
     | Value_constptr i -> A.value_constptr i
     | Value_float f -> A.value_float f
     | Value_float_array size -> A.value_float_array size
-    | Flambdaexport.Value_boxed_int (t,i) -> A.value_boxed_int t i
+    | Flambdaexport_types.Value_boxed_int (t,i) -> A.value_boxed_int t i
     | Value_string { size; contents } -> A.value_string size contents
     | Value_mutable_block _ -> A.value_unknown
     | Value_block (tag, fields) ->
-      let tag = A.Tag.create_exn tag in
       A.value_block (tag, Array.map import_approx fields)
-    | Value_closure { fun_id; closure = { closure_id; bound_var } } ->
+    | Value_closure { fun_id; set_of_closures = { set_of_closures_id; bound_var } } ->
       let bound_var = Var_within_closure.Map.map import_approx bound_var in
       let unchanging_params =
-        try Set_of_closures_id.Map.find closure_id ex_info.ex_kept_arguments with
+        try Set_of_closures_id.Map.find set_of_closures_id ex_info.ex_kept_arguments with
         | Not_found -> assert false
       in
       A.value_closure
         { closure_id = fun_id;
           set_of_closures_var = None;
           set_of_closures =
-            { function_decls = Compilenv.imported_closure closure_id;
+            { function_decls = Compilenv.imported_closure set_of_closures_id;
               bound_var;
               unchanging_params = unchanging_params;
               specialised_args = Variable.Set.empty;
               alpha_renaming =
-                Flambdasubst.
-                Alpha_renaming_map_for_ids_and_bound_vars_of_closures.empty;
+                Alpha_renaming.
+                Ids_and_bound_vars_of_closures.empty;
             } }
-    | Value_set_of_closures { closure_id; bound_var } ->
+    | Value_set_of_closures { set_of_closures_id; bound_var } ->
       let bound_var = Var_within_closure.Map.map import_approx bound_var in
       let unchanging_params =
-        try Set_of_closures_id.Map.find closure_id ex_info.ex_kept_arguments with
+        try Set_of_closures_id.Map.find set_of_closures_id ex_info.ex_kept_arguments with
         | Not_found -> assert false
       in
       A.value_set_of_closures
-        { function_decls = Compilenv.imported_closure closure_id;
+        { function_decls = Compilenv.imported_closure set_of_closures_id;
           bound_var;
           unchanging_params = unchanging_params;
           specialised_args = Variable.Set.empty;
           alpha_renaming =
-            Flambdasubst.
-            Alpha_renaming_map_for_ids_and_bound_vars_of_closures.empty; }
+            Alpha_renaming.
+            Ids_and_bound_vars_of_closures.empty; }
   with Not_found ->
     A.value_unknown
 
-and import_approx (ap : Flambdaexport.approx) =
+and import_approx (ap : Flambdaexport_types.approx) =
   match ap with
   | Value_unknown -> A.value_unknown
   | Value_id ex -> A.value_extern ex
@@ -80,18 +74,19 @@ let import_symbol sym =
     A.value_unknown
   else
     let symbol_id_map =
-      (Compilenv.approx_for_global sym.sym_unit).ex_symbol_id in
-    match import_ex (SymbolMap.find sym symbol_id_map) with
+      let global = Symbol.compilation_unit sym in
+      (Compilenv.approx_for_global global).ex_symbol_id in
+    match import_ex (Symbol.Map.find sym symbol_id_map) with
     | approx -> { approx with symbol = Some sym }
     | exception Not_found ->
-      if not (SymbolTbl.mem reexported_missing_symbols sym)
+      if not (Symbol.Tbl.mem reexported_missing_symbols sym)
       then begin
-        SymbolTbl.add reexported_missing_symbols sym ();
+        Symbol.Tbl.add reexported_missing_symbols sym ();
         Location.prerr_warning (Location.in_file "some_file")
           (Warnings.Missing_symbol_information
              (Format.asprintf "%a" Symbol.print sym,
-              Format.asprintf "%a" Symbol.Compilation_unit.print
-                sym.Symbol.sym_unit));
+              Format.asprintf "%a" Compilation_unit.print
+                (Symbol.compilation_unit sym)));
       end;
       A.value_unresolved sym
 

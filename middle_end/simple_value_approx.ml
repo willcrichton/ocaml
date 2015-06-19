@@ -11,20 +11,6 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
-module Tag = struct
-  type t = int
-
-  let create_exn tag =
-    if tag < 0 || tag > 255 then
-      Misc.fatal_error (Printf.sprintf "Tag.create_exn %d" tag)
-    else
-      tag
-
-  let to_int t = t
-end
-
 type 'a boxed_int =
   | Int32 : int32 boxed_int
   | Int64 : int64 boxed_int
@@ -47,7 +33,7 @@ type descr =
   | Value_float_array of int (* size *)
   | Value_unknown
   | Value_bottom
-  | Value_extern of Symbol.ExportId.t
+  | Value_extern of Export_id.t
   | Value_symbol of Symbol.t
   | Value_unresolved of Symbol.t
   | Value_conditional of t * t
@@ -64,7 +50,7 @@ and value_set_of_closures =
     unchanging_params : Variable.Set.t;
     specialised_args : Variable.Set.t;
     alpha_renaming :
-      Flambdasubst.Alpha_renaming_map_for_ids_and_bound_vars_of_closures.t;
+      Alpha_renaming.Ids_and_bound_vars_of_closures.t;
   }
 
 and t =
@@ -84,7 +70,7 @@ let rec print_descr ppf = function
     Format.fprintf ppf "[%i:@ @[<1>%a@]]" (Tag.to_int tag) p fields
   | Value_unknown -> Format.fprintf ppf "?"
   | Value_bottom -> Format.fprintf ppf "bottom"
-  | Value_extern id -> Format.fprintf ppf "_%a_" Symbol.ExportId.print id
+  | Value_extern id -> Format.fprintf ppf "_%a_" Export_id.print id
   | Value_symbol sym -> Format.fprintf ppf "%a" Symbol.print sym
   | Value_closure { closure_id } ->
     Format.fprintf ppf "(fun:@ %a)" Closure_id.print closure_id
@@ -179,7 +165,8 @@ let const_approx (flam : Flambda.const) =
   | Fconst_float_array a -> value_float_array (List.length a)
   | Fconst_immstring s -> value_string (String.length s) (Some s)
 
-let check_constant_result (lam : _ Flambda.t) approx =
+let check_constant_result (lam : _ Flambda.t) approx
+      : _ Flambda.t * t =
   if Effect_analysis.no_effects lam then
     match approx.descr with
     | Value_int n ->
@@ -308,7 +295,7 @@ let rec meet_descr d1 d2 = match d1, d2 with
       d1
   | Value_symbol s1, Value_symbol s2 when Symbol.equal s1 s2 ->
       d1
-  | Value_extern e1, Value_extern e2 when Symbol.ExportId.equal e1 e2 ->
+  | Value_extern e1, Value_extern e2 when Export_id.equal e1 e2 ->
       d1
   | Value_float i, Value_float j when i = j ->
       d1

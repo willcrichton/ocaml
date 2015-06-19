@@ -14,35 +14,15 @@
 #########################################################################
 
 case $1 in
-    middle_end/abstract_identifiers.* \
-  | middle_end/closure_conversion.* \
-  | middle_end/effect_analysis.* \
-  | middle_end/flambdacheck.* \
-  | middle_end/flambdaiter.* \
-  | middle_end/flambda.* \
-  | middle_end/flambdasimplify.* \
-  | middle_end/flambdasubst.* \
-  | middle_end/flambdautils.* \
-  | middle_end/inconstant_idents.* \
-  | middle_end/inlining_cost.* \
-  | middle_end/inlining_decision.* \
-  | middle_end/inlining_env.* \
-  | middle_end/inlining.* \
-  | middle_end/inlining_result.* \
-  | middle_end/inlining_stats.* \
-  | middle_end/inlining_stats_types.* \
-  | middle_end/invariant_params.* \
-  | middle_end/printflambda.* \
-  | middle_end/ref_to_variables.* \
-  | middle_end/simple_value_approx.* \
-  | middle_end/symbol.* \
-  | middle_end/unbox_returns.* \
-  | asmcomp/clambdagen.* \
+    asmcomp/clambdagen.* \
   | asmcomp/flambdaexport.* \
-  | asmcomp/flambdasym.*)
-    # More aggressive "unused identifier" warnings for Flambda passes.
-    # Also suppress "label ... defined in both ..." for record types, since
-    # it is of no consequence.
-    echo '-w +K+27-30'
+  | asmcomp/flambdaexport_types.* \
+  | asmcomp/flambdasym.* \
+  | asmcomp/import_approx.* \
+  | middle_end/*)
+    # Strict compilation options for Flambda passes.
+    # Constructor/record field disambiguation is kept in check by
+    # using -principal (which is also morally correct).
+    echo '-w +a-4-9+27-30-40-41-42 -principal -safe-string -strict-formats'
     ;;
 esac

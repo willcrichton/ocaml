@@ -10,9 +10,6 @@
 (*                                                                     *)
 (***********************************************************************)
 
-open Misc
-open Abstract_identifiers
-
 (* access functions *)
 
 let find_declaration cf ({ funs } : _ Flambda.function_declarations) =
@@ -91,6 +88,9 @@ let description_of_toplevel_node (expr : _ Flambda.t) =
   | Funreachable _ -> "unreachable"
 
 let recursive_functions ({ funs } : _ Flambda.function_declarations) =
+  let module Variable_connected_components =
+    Sort_connected_components.Make (Variable)
+  in
   let function_variables = Variable.Map.keys funs in
   let directed_graph =
     Variable.Map.map (fun (ffun : _ Flambda.function_declaration) ->
@@ -115,7 +115,6 @@ let rec same (l1 : 'a Flambda.t) (l2 : 'a Flambda.t) =
   | Fvar(v1, _), Fvar(v2, _) -> Variable.equal v1 v2
   | Fvar _, _ | _, Fvar _ -> false
   | Fconst(c1, _), Fconst(c2, _) -> begin
-      let open Asttypes in
       match c1, c2 with
       | Fconst_base (Const_string (s1,_)), Fconst_base (Const_string (s2,_)) ->
           s1 == s2 (* string constants can't be merged: they are mutable,
@@ -132,7 +131,7 @@ let rec same (l1 : 'a Flambda.t) (l2 : 'a Flambda.t) =
   | Fapply(a1, _), Fapply(a2, _) ->
       a1.kind = a2.kind &&
       same a1.func a2.func &&
-      samelist same a1.args a2.args
+      Misc.samelist same a1.args a2.args
   | Fapply _, _ | _, Fapply _ -> false
   | Fset_of_closures (c1, _), Fset_of_closures (c2, _) ->
       Variable.Map.equal sameclosure c1.function_decls.funs c2.function_decls.funs &&
@@ -142,7 +141,7 @@ let rec same (l1 : 'a Flambda.t) (l2 : 'a Flambda.t) =
   | Fselect_closure (f1, _), Fselect_closure (f2, _) ->
       same f1.set_of_closures f2.set_of_closures &&
       Closure_id.equal f1.closure_id f1.closure_id &&
-      sameoption Closure_id.equal f1.relative_to f1.relative_to
+      Misc.sameoption Closure_id.equal f1.relative_to f1.relative_to
   | Fselect_closure _, _ | _, Fselect_closure _ -> false
   | Fvar_within_closure (v1, _), Fvar_within_closure (v2, _) ->
       same v1.closure v2.closure &&
@@ -153,24 +152,24 @@ let rec same (l1 : 'a Flambda.t) (l2 : 'a Flambda.t) =
       k1 = k2 && Variable.equal v1 v2 && same a1 a2 && same b1 b2
   | Flet _, _ | _, Flet _ -> false
   | Fletrec (bl1, a1, _), Fletrec (bl2, a2, _) ->
-      samelist samebinding bl1 bl2 && same a1 a2
+      Misc.samelist samebinding bl1 bl2 && same a1 a2
   | Fletrec _, _ | _, Fletrec _ -> false
   | Fprim (p1, al1, _, _), Fprim (p2, al2, _, _) ->
-      p1 = p2 && samelist same al1 al2
+      p1 = p2 && Misc.samelist same al1 al2
   | Fprim _, _ | _, Fprim _ -> false
   | Fswitch (a1, s1, _), Fswitch (a2, s2, _) ->
       same a1 a2 && sameswitch s1 s2
   | Fswitch _, _ | _, Fswitch _ -> false
   | Fstringswitch (a1, s1, d1, _), Fstringswitch (a2, s2, d2, _) ->
       same a1 a2 &&
-      samelist (fun (s1, e1) (s2, e2) -> s1 = s2 && same e1 e2) s1 s2 &&
-      sameoption same d1 d2
+      Misc.samelist (fun (s1, e1) (s2, e2) -> s1 = s2 && same e1 e2) s1 s2 &&
+      Misc.sameoption same d1 d2
   | Fstringswitch _, _ | _, Fstringswitch _ -> false
   | Fstaticraise (e1, a1, _), Fstaticraise (e2, a2, _) ->
-      Static_exception.equal e1 e2 && samelist same a1 a2
+      Static_exception.equal e1 e2 && Misc.samelist same a1 a2
   | Fstaticraise _, _ | _, Fstaticraise _ -> false
   | Fstaticcatch (s1, v1, a1, b1, _), Fstaticcatch (s2, v2, a2, b2, _) ->
-      Static_exception.equal s1 s2 && samelist Variable.equal v1 v2 &&
+      Static_exception.equal s1 s2 && Misc.samelist Variable.equal v1 v2 &&
       same a1 a2 && same b1 b2
   | Fstaticcatch _, _ | _, Fstaticcatch _ -> false
   | Ftrywith (a1, v1, b1, _), Ftrywith (a2, v2, b2, _) ->
@@ -193,24 +192,25 @@ let rec same (l1 : 'a Flambda.t) (l2 : 'a Flambda.t) =
       Variable.equal v1 v2 && same a1 a2
   | Fassign _, _ | _, Fassign _ -> false
   | Fsend(k1, a1, b1, cl1, _, _), Fsend(k2, a2, b2, cl2, _, _) ->
-      k1 = k2 && same a1 a2 && same b1 b2 && samelist same cl1 cl2
+      k1 = k2 && same a1 a2 && same b1 b2 && Misc.samelist same cl1 cl2
   | Fsend _, _ | _, Fsend _ -> false
   | Funreachable _, Funreachable _ -> true
 
-and sameclosure c1 c2 =
-  samelist Variable.equal c1.params c2.params &&
+and sameclosure (c1 : _ Flambda.function_declaration)
+      (c2 : _ Flambda.function_declaration) =
+  Misc.samelist Variable.equal c1.params c2.params &&
   same c1.body c2.body
 
 and samebinding (v1, c1) (v2, c2) =
   Variable.equal v1 v2 && same c1 c2
 
-and sameswitch fs1 fs2 =
+and sameswitch (fs1 : _ Flambda.switch) (fs2 : _ Flambda.switch) =
   let samecase (n1, a1) (n2, a2) = n1 = n2 && same a1 a2 in
   fs1.numconsts = fs2.numconsts &&
   fs1.numblocks = fs2.numblocks &&
-  samelist samecase fs1.consts fs2.consts &&
-  samelist samecase fs1.blocks fs2.blocks &&
-  sameoption same fs1.failaction fs2.failaction
+  Misc.samelist samecase fs1.consts fs2.consts &&
+  Misc.samelist samecase fs1.blocks fs2.blocks &&
+  Misc.sameoption same fs1.failaction fs2.failaction
 
 let can_be_merged = same
 
@@ -242,9 +242,9 @@ let make_closure_declaration ~id ~body ~params : _ Flambda.t =
   end;
   let sb =
     Variable.Set.fold
-      (fun id sb -> Variable.Map.add id (Flambdasubst.freshen_var id) sb)
+      (fun id sb -> Variable.Map.add id (Alpha_renaming.freshen_var id) sb)
       free_variables Variable.Map.empty in
-  let body = Flambdasubst.toplevel_substitution sb body in
+  let body = Alpha_renaming.toplevel_substitution sb body in
   let subst id = Variable.Map.find id sb in
   let function_declaration : _ Flambda.function_declaration =
     { stub = false;
@@ -260,7 +260,7 @@ let make_closure_declaration ~id ~body ~params : _ Flambda.t =
         Variable.Map.add id' (Flambda.Fvar(id,Expr_id.create ())) fv')
       (Variable.Map.filter (fun id _ -> not (Variable.Set.mem id param_set)) sb)
       Variable.Map.empty in
-  let current_unit = Symbol.Compilation_unit.get_current_exn () in
+  let current_unit = Compilation_unit.get_current_exn () in
   Fselect_closure
     ({ set_of_closures =
          Fset_of_closures

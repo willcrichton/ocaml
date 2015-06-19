@@ -1,19 +1,19 @@
-(***********************************************************************)
-(*                                                                     *)
-(*                                OCaml                                *)
-(*                                                                     *)
-(*            Xavier Leroy, projet Cristal, INRIA Rocquencourt         *)
-(*                                                                     *)
-(*  Copyright 1996 Institut National de Recherche en Informatique et   *)
-(*  en Automatique.  All rights reserved.  This file is distributed    *)
-(*  under the terms of the Q Public License version 1.0.               *)
-(*                                                                     *)
-(***********************************************************************)
+(**************************************************************************)
+(*                                                                        *)
+(*                                OCaml                                   *)
+(*                                                                        *)
+(*             Xavier Leroy, projet Cristal, INRIA Rocquencourt           *)
+(*                       Pierre Chambart, OCamlPro                        *)
+(*                  Mark Shinwell, Jane Street Europe                     *)
+(*                                                                        *)
+(*   Copyright 2015 Institut National de Recherche en Informatique et     *)
+(*   en Automatique.  All rights reserved.  This file is distributed      *)
+(*   under the terms of the Q Public License version 1.0.                 *)
+(*                                                                        *)
+(**************************************************************************)
 
 (* Compilation environments for compilation units *)
 
-open Symbol
-open Abstract_identifiers
 open Cmx_format
 
 val reset: ?packname:string -> string -> unit
@@ -27,7 +27,7 @@ val current_unit_infos: unit -> unit_infos
 
 val current_unit_name: unit -> string
         (* Return the name of the unit being compiled *)
-val current_unit_linkage_name: unit -> linkage_name
+val current_unit_linkage_name: unit -> Linkage_name.t
         (* Return the linkage_name of the unit being compiled *)
 val current_unit_id: unit -> Ident.t
         (* Return the id of the unit being compiled *)
@@ -62,13 +62,14 @@ val set_global_approx: Clambda.value_approximation -> unit
 val record_global_approx_toplevel: unit -> unit
         (* Record the current approximation for the current toplevel phrase *)
 
-val set_export_info: Flambdaexport.exported -> unit
+val set_export_info: Flambdaexport_types.exported -> unit
         (* Record the informations of the unit being compiled *)
-val approx_env: unit -> Flambdaexport.exported
+val approx_env: unit -> Flambdaexport_types.exported
         (* Returns all the information loaded from extenal compilation units *)
-val approx_for_global: Compilation_unit.t -> Flambdaexport.exported
+val approx_for_global: Compilation_unit.t -> Flambdaexport_types.exported
         (* Loads the exported information declaring the compilation_unit *)
 
+(* CR mshinwell: rename to imported_set_of_closures *)
 val imported_closure
    : Set_of_closures_id.t
   -> Expr_id.t Flambda.function_declarations
@@ -97,7 +98,7 @@ val add_structured_constant:
   string -> Clambda.ustructured_constant ->
   shared:bool ->
   string
-val cannonical_symbol: string -> string
+val canonical_symbol: string -> string
 
 val structured_constants:
   unit -> ((string * bool) list * Clambda.ustructured_constant) list

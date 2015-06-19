@@ -1,7 +1,3 @@
-open Abstract_identifiers
-
-module Compilation_unit = Symbol.Compilation_unit
-
 let vim_trailer = "vim:fdm=expr:filetype=plain:\
   foldexpr=getline(v\\:lnum)=~'^\\\\s*$'&&getline(v\\:lnum+1)=~'\\\\S'?'<1'\\:1"
 
@@ -68,7 +64,7 @@ module Line_number_then_time = struct
     | _ -> compare t1 t2
 
   let create ~debuginfo ~time = debuginfo, time
-  let line_number (t : t) = (fst t).dinfo_line
+  let line_number t = (fst t).Debuginfo.dinfo_line
 end
 
 let decisions :

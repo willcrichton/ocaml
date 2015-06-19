@@ -10,8 +10,6 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
 (* CR pchambart to pchambart: in fact partial application doesn't work because
    there are no 'known' partial application left: they are converted to
    applications new partial function declaration.
@@ -191,7 +189,7 @@ let unchanging_params_in_recursion (decls : _ Flambda.function_declarations) =
     | Fvar (var,_) -> test_escape var
     | Fapply ({ func = Fvar(callee,_); args }, _) ->
         let num_args = List.length args in
-        for callee_pos = num_args to (arity callee) - 1 do
+        for callee_pos = num_args to (arity ~callee) - 1 do
           match find_callee_arg ~callee ~callee_pos with
           | None -> ()
           | Some callee_arg -> mark ~callee ~callee_arg
@@ -206,7 +204,7 @@ let unchanging_params_in_recursion (decls : _ Flambda.function_declarations) =
         Flambdaiter.apply_on_subexpressions (loop ~caller) e
   in
   Variable.Map.iter (fun caller (decl : _ Flambda.function_declaration) ->
-      loop caller decl.body)
+      loop ~caller decl.body)
     decls.funs;
   let relation =
     Variable.Map.fold (fun func_var

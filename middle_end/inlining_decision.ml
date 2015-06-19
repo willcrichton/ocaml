@@ -11,8 +11,6 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
 module A = Simple_value_approx
 module E = Inlining_env
 module R = Inlining_result
@@ -133,7 +131,10 @@ let inline_non_recursive
     end
   end
 
-let inlining_decision_for_call_site ~env ~r ~clos ~funct ~fun_id
+let inlining_decision_for_call_site ~env ~r
+      ~(clos : _ Flambda.function_declarations)
+      ~(funct : _ Flambda.t)
+      ~fun_id
       ~(func : 'a Flambda.function_declaration)
       ~(closure : Simple_value_approx.value_set_of_closures)
       ~args_with_approxs ~dbg ~eid

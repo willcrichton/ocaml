@@ -11,8 +11,6 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Abstract_identifiers
-
 let apply_on_subexpressions f (flam : _ Flambda.t) =
   match flam with
   | Fsymbol _
@@ -191,7 +189,8 @@ let iter_on_closures f t =
 
 let map_general ~toplevel f tree =
   let rec aux (tree : _ Flambda.t) =
-    let exp = match tree with
+    let exp : _ Flambda.t =
+      match tree with
       | Fsymbol _ -> tree
       | Fvar _ -> tree
       | Fconst _ -> tree
@@ -201,7 +200,7 @@ let map_general ~toplevel f tree =
                     kind; dbg; return_arity }, annot)
       | Fset_of_closures ({ function_decls; free_vars;
                     specialised_args },annot) ->
-          let function_decls =
+          let function_decls : _ Flambda.function_declarations =
             if toplevel
             then function_decls
             else
