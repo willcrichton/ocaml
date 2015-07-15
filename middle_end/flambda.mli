@@ -181,8 +181,7 @@ and 'a function_declarations = {
 and 'a function_declaration = {
   params : Variable.t list;
   body : 'a t;
-  (** If return is Multi_return, then the function returns blocks but not on
-      the heap, using a special optimized return convention instead. *)
+  (** TODO(wcrichton): document this *)
   return_arity : int;
   (** All variables free in the *body* of the function.  For example, a
       variable that is bound as one of the function's parameters will still

@@ -469,14 +469,16 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
       approx
   | Fprim ((Psequand | Psequor), _, _, _) ->
     Misc.fatal_error "Psequand or Psequor with wrong number of arguments"
-  | Fprim (Pisblock, [cond; thn; els], dbg, annot) ->
+  | Fprim (Pisblock, [cond; thn; els], _, annot) ->
     let cond, r = loop env r cond in
     let thn, r = loop env r thn in
-    let thn_approx = R.approx r in
+    (*let thn_approx = R.approx r in*)
     let els, r = loop env r els in
-    let els_approx = R.approx r in
+    (*let els_approx = R.approx r in
     Fprim (Pisblock, [cond; thn; els], dbg, annot),
-    ret r (A.value_conditional thn_approx els_approx)
+    ret r (A.value_conditional thn_approx els_approx)*)
+    Fifthenelse(cond, thn, els, annot),
+    ret r (A.value_unknown)
   | Fprim (p, args, dbg, annot) as expr ->
     let (args', approxs, r) = loop_list env r args in
     let expr : _ Flambda.t =
@@ -558,7 +560,6 @@ and loop_direct env r (tree : 'a Flambda.t) : 'a Flambda.t * R.t =
       let r = R.map_benefit r Inlining_cost.Benefit.remove_branch in
       Effect_analysis.sequence arg ifso annot, r
     | Value_conditional (thn, els) when foo() ->
-      Format.printf "%a %a\n" A.print_approx thn A.print_approx els;
       let var = match arg with Flambda.Fvar(var, _) -> var | _ -> assert false in
       let env = E.inside_branch env in
       let env' = E.add_approx var thn env in

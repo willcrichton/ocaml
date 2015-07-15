@@ -14,7 +14,7 @@
 let middle_end ppf ~sourcefile ~prefixname ~backend ~exported_fields lam =
   Timings.(start (Flambda_middle_end sourcefile));
   let dump_and_check s flam =
-    if !Clflags.dump_flambda && false
+    if !Clflags.dump_flambda
     then Format.fprintf ppf "%s:@ %a@." s Printflambda.flambda flam;
     try Flambdacheck.check flam
     with e ->

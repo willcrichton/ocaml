@@ -99,3 +99,8 @@ val toplevel_substitution
    : Variable.t Variable.Map.t
   -> 'a Flambda.t
   -> 'a Flambda.t
+
+val substitution
+   : Variable.t Variable.Map.t
+  -> 'a Flambda.t
+  -> 'a Flambda.t

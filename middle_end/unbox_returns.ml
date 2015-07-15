@@ -1,8 +1,8 @@
 open Ext_types
 open Flambda
 
-let plam flam =
-  if !Clflags.dump_flambda then Printflambda.flambda Format.std_formatter flam else ()
+(* let plam flam =
+ *   if !Clflags.dump_flambda then Printflambda.flambda Format.std_formatter flam else () *)
 
 let check_can_unbox ({body; return_arity} : 'a function_declaration) =
   let fail_return = (false, 0, Int.Map.empty) in
@@ -101,16 +101,16 @@ let unbox_returns tree =
         Fprim(
           Pisblock,
           [Fprim(
-             Pintcomp(Ceq),
+             Pintcomp(Cneq),
              [Fvar(tag_var, Expr_id.create());
               Fconst(Fconst_base(Const_int(10)), Expr_id.create())],
              Debuginfo.none,
              Expr_id.create());
            switch;
-           Fvar(List.nth result_vars 0, Expr_id.create())],
+           Fvar(List.nth result_vars 0, Expr_id.create())
+           ],
           Debuginfo.none,
           Expr_id.create()) in
-
 
       let field_bindings =
         List.fold_left
@@ -181,7 +181,8 @@ let unbox_returns tree =
             with Not_found -> fv end
           | e -> e)
           fn.body in
-        {fn with body; free_variables = inner_free_fn_var; return_arity = num_returns + 1} in
+        {fn with body; free_variables = inner_free_fn_var;
+                 return_arity = num_returns + 1} in
 
       let fn_binding =
         Flet(
@@ -229,39 +230,69 @@ let unbox_returns tree =
     tree
 
 let duplicate tree =
+  let module Sexn = Static_exception in
+  let var_map = ref Variable.Map.empty in
+  let exn_map = ref Sexn.Map.empty in
   let rename var =
-    Variable.rename
-      ~current_compilation_unit:(Variable.get_compilation_unit var)
-      ~append:"_dup"
-      var in
-  plam tree;
-  let (map, tree) =
-    Flambdaiter.fold_subexpressions (fun map _ -> function
+    let var' =
+      Variable.rename
+        ~current_compilation_unit:(Variable.get_compilation_unit var)
+        ~append:"_dup"
+        var in
+    var_map := Variable.Map.add var var' !var_map in
+  Flambdaiter.iter (function
+    | Flet(_, var, _, _, _) -> rename var
+    | Fletrec(l, _, _) ->
+      List.iter (fun (var, _) -> rename var) l
+    | Fset_of_closures({function_decls}, _) ->
+      Variable.Map.iter
+        (fun var {params} -> rename var; List.iter rename params)
+        function_decls.funs
+    | Fstaticcatch(exn, _, _, _, _) ->
+      exn_map := Sexn.Map.add exn (Sexn.create()) !exn_map
+    | _ -> ())
+    tree;
+  let lookup_var var =
+    try Variable.Map.find var !var_map with Not_found -> var in
+  let lookup_exn exn =
+    try Sexn.Map.find exn !exn_map with Not_found -> exn in
+  let tree =
+    Flambdaiter.map (function
       | Flet(a, var, b, c, d) ->
-        let var' = rename var in
-        Format.printf "%a -> %a\n" Variable.print var Variable.print var';
-        (Variable.Map.add var var' map, Flet(a, var', b, c, d))
+        Flet(a, lookup_var var, b, c, d)
       | Fletrec(l, a, b) ->
-        let (l, map) =
-          List.fold_left (fun (l, map) (var, t) ->
-            let var' = rename var in
-            ((var', t) :: l, Variable.Map.add var var' map))
-            ([], map) l
-        in
-        (map, Fletrec(l, a, b))
-      | e -> (map, e))
-      Variable.Map.empty
+        Fletrec(List.map (fun (var, t) -> (lookup_var var, t)) l, a, b)
+      | Fset_of_closures({function_decls} as fset, d) ->
+        let funs =
+          Variable.Map.fold
+            (fun k ({params; free_variables} as decl) map ->
+               let params = List.map lookup_var params in
+               let free_variables = Variable.Set.fold (fun v set ->
+                 Variable.Set.add (lookup_var v) set)
+                 free_variables
+                 Variable.Set.empty in
+               Variable.Map.add (lookup_var k) {decl with params; free_variables} map)
+            function_decls.funs
+            Variable.Map.empty in
+        Fset_of_closures({fset with function_decls = {function_decls with funs}}, d)
+      | Fselect_closure({closure_id} as fsel, d) ->
+        let closure_id = closure_id |> Closure_id.unwrap |> lookup_var |> Closure_id.wrap in
+        Fselect_closure({fsel with closure_id}, d)
+      | Fstaticcatch(exn, a, b, c, d) ->
+        Fstaticcatch(lookup_exn exn, a, b, c, d)
+      | Fstaticraise(exn, a, b) ->
+        Fstaticraise(lookup_exn exn, a, b)
+      | e -> e)
       tree in
-  Alpha_renaming.toplevel_substitution map tree
+  Alpha_renaming.substitution !var_map tree
 
 let lift_ifs tree =
   Flambdaiter.map (function
     | Flet(Immutable, var, Fprim(Pisblock, [cond; thn; els], _, _), body, annot) ->
-      let hi = Fifthenelse(
+      Fifthenelse(
         cond,
         Flet(Immutable, var, thn, body, annot),
         duplicate (Flet(Immutable, var, els, body, annot)),
-        Expr_id.create()) in
-      plam hi; hi
+        Expr_id.create())
     | e -> e)
     tree

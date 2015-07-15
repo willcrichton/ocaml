@@ -150,6 +150,22 @@ let toplevel_substitution sb tree =
   in
   Flambdaiter.map_toplevel aux tree
 
+let substitution sb tree =
+  let sb v = try Variable.Map.find v sb with Not_found -> v in
+  let aux (flam : _ Flambda.t) : _ Flambda.t =
+    match flam with
+    | Fvar (id,e) -> Fvar (sb id,e)
+    | Fassign (id,e,d) -> Fassign (sb id,e,d)
+    | Fset_of_closures (cl,d) ->
+        Fset_of_closures ({cl with
+                   specialised_args =
+                     Variable.Map.map sb cl.specialised_args},
+                  d)
+    | e -> e
+  in
+  Flambdaiter.map aux tree
+
+
 module Ids_and_bound_vars_of_closures = struct
   type inactive_or_active = t
 
