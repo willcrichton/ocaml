@@ -14,52 +14,23 @@
 module A = Simple_value_approx
 module C = Inlining_cost
 
-type lifter = Expr_id.t Flambda.t -> Expr_id.t Flambda.t
+type lifter = Flambda.t -> Flambda.t
 
 let lift_lets tree =
-  let rec aux (expr : _ Flambda.t) : _ Flambda.t =
+  let rec aux (expr : Flambda.t) : Flambda.t =
     match expr with
-    | Fsequence(Flet(str, v, def, body, d1), seq, dseq) ->
-        Flet(str, v, def, Fsequence( aux body, seq, dseq), d1)
-    | Flet(str1, v1, Flet(str2, v2, def2, body2, d2), body1, d1) ->
-        Flet(str2, v2, def2, aux (
-          Flambda.Flet(str1, v1, body2, body1, d1)), d2)
+    | Let (let_kind1, v1, Expr (Let (let_kind2, v2, def2, body2)), body1) ->
+      Let (let_kind2, v2, def2, aux (Flambda.Let (let_kind1, v1, Expr body2, body1)))
     | e -> e
   in
-  Flambdaiter.map aux tree
+  Flambda_iterators.map aux (fun (named : Flambda.named) -> named) tree
 
-let lift_set_of_closures tree =
-  let aux (expr : _ Flambda.t) : _ Flambda.t =
-    match expr with
-    | Fselect_closure({ set_of_closures = Fset_of_closures(set, dset) } as closure, d) ->
-        let decl = Flambdautils.find_declaration closure.closure_id set.function_decls in
-        if not decl.stub then
-          expr
-        else
-          (* If the function is a stub, we create an intermediate let to allow
-             eliminating it *)
-          let set_of_closures_var =
-            Variable.create
-              ~current_compilation_unit:
-                (Compilation_unit.get_current_exn ())
-              "set_of_closures"
-          in
-          Flet(Immutable, set_of_closures_var,
-               Fset_of_closures(set, dset),
-               Fselect_closure({ closure with
-                          set_of_closures =
-                            Fvar (set_of_closures_var, Expr_id.create ()) },
-                        d),
-               Expr_id.create ())
-    | e -> e
-  in
-  Flambdaiter.map aux tree
-
-let lifting_helper exprs ~create_body ~name =
-  let exprs, lets =
-    List.fold_right (fun (flam : _ Flambda.t) (exprs, lets) ->
+let lifting_helper exprs ~evaluation_order ~create_body ~name =
+  let vars, lets =
+    (* [vars] corresponds elementwise to [exprs]; the order is unchanged. *)
+    List.fold_right (fun (flam : Flambda.t) (vars, lets) ->
         match flam with
-        | Fvar (_v, _) as e ->
+        | Var v ->
           (* Assumes that [v] is an immutable variable, otherwise this may
              change the evaluation order. *)
           (* XCR mshinwell for pchambart: Please justify why [v] is always
@@ -71,37 +42,24 @@ let lifting_helper exprs ~create_body ~name =
              We could either remove the optimisation in Simplif in case of native code
              and add an assert requiring that no mutable variables here (in the Let case)
              or get rid of this one that will be done in the end by the first inlining
-             pass. *)
-          e::exprs, lets
+             pass.
+             mshinwell: as a note, we need to check what to do for the other
+             cases in which we now use this function (see Closure_conversion)
+          *)
+          v::vars, lets
         | expr ->
           let v =
             Variable.create name ~current_compilation_unit:
                 (Compilation_unit.get_current_exn ())
           in
-          ((Fvar (v, Expr_id.create ())) : _ Flambda.t)::exprs,
-            (v, expr)::lets)
+          v::vars, (v, expr)::lets)
       exprs ([], [])
   in
+  let lets =
+    match evaluation_order with
+    | `Right_to_left -> lets
+    | `Left_to_right -> List.rev lets
+  in
   List.fold_left (fun body (v, expr) ->
-      Flambda.Flet (Immutable, v, expr, body, Expr_id.create ()))
-    (create_body exprs) lets
-
-let lift_block_construction_to_variables tree =
-  let aux (expr : _ Flambda.t) : _ Flambda.t =
-    match expr with
-    | Fprim (Pmakeblock _ as primitive, args, dbg, id) ->
-      lifting_helper args ~name:"block_field" ~create_body:(fun args ->
-        Fprim (primitive, args, dbg, id))
-    | expr -> expr
-  in
-  Flambdaiter.map aux tree
-
-let lift_apply_construction_to_variables tree =
-  let aux (expr : _ Flambda.t) : _ Flambda.t =
-    match expr with
-    | Fapply (apply, id) ->
-      lifting_helper apply.args ~name:"apply_arg" ~create_body:(fun args ->
-        Fapply ({ apply with args; }, id))
-    | expr -> expr
-  in
-  Flambdaiter.map aux tree
+      Flambda.Let (Immutable, v, Expr expr, body))
+    (create_body vars) lets

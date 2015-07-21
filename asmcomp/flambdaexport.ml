@@ -113,7 +113,7 @@ let print_approx ppf (export : ET.exported) =
       | A.Nativeint -> Format.fprintf ppf "%ni" i
   and print_fields ppf fields =
     Array.iter (fun approx -> fprintf ppf "%a@ " print_approx approx) fields
-  and print_set_of_closures ppf { ET. set_of_closures_id; bound_var } =
+  and print_set_of_closures ppf { ET. set_of_closures_id; bound_vars } =
     if Set_of_closures_id.Set.mem set_of_closures_id !printed_set_of_closures
     then fprintf ppf "%a" Set_of_closures_id.print set_of_closures_id
     else begin
@@ -121,13 +121,13 @@ let print_approx ppf (export : ET.exported) =
         := Set_of_closures_id.Set.add set_of_closures_id !printed_set_of_closures;
       fprintf ppf "{%a: %a}"
         Set_of_closures_id.print set_of_closures_id
-        print_binding bound_var
+        print_binding bound_vars
     end
-  and print_binding ppf bound_var =
+  and print_binding ppf bound_vars =
     Var_within_closure.Map.iter (fun clos_id approx ->
         fprintf ppf "%a -> %a,@ "
           Var_within_closure.print clos_id
-          print_approx approx) bound_var
+          print_approx approx) bound_vars
   in
   let print_approxs id approx =
     fprintf ppf "%a -> %a;@ " Ident.print id print_approx approx
@@ -163,7 +163,7 @@ let print_all ppf (export : ET.exported) =
   fprintf ppf "constants@ %a@.@."
     Symbol.Set.print export.ex_constants;
   fprintf ppf "functions@ %a@.@."
-    (Set_of_closures_id.Map.print Printflambda.function_declarations) export.ex_functions
+    (Set_of_closures_id.Map.print Flambda_printers.function_declarations) export.ex_functions
 
 let merge (e1 : ET.exported) (e2 : ET.exported) : ET.exported =
   let int_eq (i:int) j = i = j in
@@ -217,9 +217,9 @@ let import_approx_for_pack units pack (approx : ET.approx) : ET.approx =
 let import_set_of_closures units pack
       (set_of_closures : ET.value_set_of_closures) : ET.value_set_of_closures =
   { set_of_closures_id = set_of_closures.set_of_closures_id;
-    bound_var =
+    bound_vars =
       Var_within_closure.Map.map (import_approx_for_pack units pack)
-        set_of_closures.bound_var;
+        set_of_closures.bound_vars;
     results =
       Closure_id.Map.map (import_approx_for_pack units pack)
         set_of_closures.results }
@@ -245,16 +245,15 @@ let import_descr_for_pack units pack (descr : ET.descr) : ET.descr =
     Value_mutable_block (tag, size)
 
 let import_code_for_pack units pack expr =
-  Flambdaiter.map (function
-      | Fsymbol (sym, ()) ->
-        Fsymbol (import_symbol_for_pack units pack sym, ())
+  Flambda_iterators.map_named (function
+      | Symbol sym -> Symbol (import_symbol_for_pack units pack sym)
       | e -> e)
     expr
 
 let import_ffunctions_for_pack units pack
-      (ffuns : _ Flambda.function_declarations) =
+      (ffuns : Flambda.function_declarations) =
   { ffuns with
-    funs = Variable.Map.map (fun (ffun : _ Flambda.function_declaration) ->
+    funs = Variable.Map.map (fun (ffun : Flambda.function_declaration) ->
         {ffun with body = import_code_for_pack units pack ffun.body})
         ffuns.funs }
 
@@ -262,7 +261,7 @@ let ex_functions_off ex_functions =
   let aux_fun ffunctions function_id _ map =
     Closure_id.Map.add
       (Closure_id.wrap function_id) ffunctions map in
-  let aux _ (f : _ Flambda.function_declarations) map =
+  let aux _ (f : Flambda.function_declarations) map =
     Variable.Map.fold (aux_fun f) f.funs map
   in
   Set_of_closures_id.Map.fold aux ex_functions Closure_id.Map.empty

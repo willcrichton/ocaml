@@ -14,6 +14,6 @@
     If foo is inlined into a call site that looks like [let (x, y) = foo()]
     then later optimization passes will eliminate the makeblock call.
 *)
-val unbox_returns : Expr_id.t Flambda.t -> Expr_id.t Flambda.t
+val unbox_returns : Flambda.t -> Flambda.t
 
-val lift_ifs : Expr_id.t Flambda.t -> Expr_id.t Flambda.t
+val lift_ifs : Flambda.t -> Flambda.t

@@ -12,44 +12,47 @@
 (**************************************************************************)
 
 module A = Simple_value_approx
-module E = Inlining_env
-module R = Inlining_result
-module U = Flambdautils
+module E = Inline_and_simplify_aux.Env
+module R = Inline_and_simplify_aux.Result
+module U = Flambda_utils
 
-let is_probably_a_functor env clos approxs =
-  !Clflags.functor_heuristics &&
-  E.at_toplevel env &&
-  not (E.is_inside_branch env) &&
-    List.for_all A.known approxs &&
-    Variable.Set.is_empty (U.recursive_functions clos)
+let is_probably_a_functor env func_decls approxs =
+  !Clflags.functor_heuristics
+    && E.at_toplevel env
+    && (not (E.is_inside_branch env))
+    && List.for_all A.known approxs
+    && Variable.Set.is_empty
+        (Find_recursive_functions.in_function_decls func_decls)
 
 let should_inline_function_known_to_be_recursive
-      ~(func : 'a Flambda.function_declaration)
-      ~(clos : 'a Flambda.function_declarations)
-      ~env ~(closure : A.value_set_of_closures) ~approxs ~unchanging_params =
+      ~(func : Flambda.function_declaration)
+      ~(clos : Flambda.function_declarations)
+      ~env ~(value_set_of_closures : A.value_set_of_closures)
+      ~approxs ~unchanging_params =
   assert (List.length func.params = List.length approxs);
   (not (E.inside_set_of_closures_declaration clos.set_of_closures_id env))
-    && (not (Variable.Set.is_empty closure.unchanging_params))
-    && Var_within_closure.Map.is_empty closure.bound_var (* closed *)
+    && (not (Variable.Set.is_empty value_set_of_closures.unchanging_params))
+    && Var_within_closure.Map.is_empty
+        value_set_of_closures.bound_vars (* closed *)
     && List.exists2 (fun id approx ->
           A.useful approx && Variable.Set.mem id unchanging_params)
         func.params approxs
 
 let inline_non_recursive
-    ~inline_by_copying_function_body
-    ~env ~r ~clos ~ funct ~fun_id
-    ~(func : 'a Flambda.function_declaration)
+    ~env ~r ~function_decls ~lhs_of_application ~closure_id_being_applied
+    ~(func : Flambda.function_declaration)
     ~(record_decision : Inlining_stats_types.Decision.t -> unit)
     ~direct_apply
     ~no_transformation
     ~probably_a_functor
-    ~args
-    ~loop =
+    ~(args : Variable.t list)
+    ~simplify =
   let body, r_inlined =
     (* We first try to inline that function preventing further inlining below *)
-    inline_by_copying_function_body ~env
+    Inlining_transforms.inline_by_copying_function_body ~env
       ~r:(R.set_inlining_threshold (R.clear_benefit r) Inlining_cost.Never_inline)
-      ~clos ~lfunc:funct ~fun_id ~func ~args
+      ~function_decls ~lhs_of_application ~closure_id_being_applied
+      ~function_decl:func ~args ~simplify
   in
   let unconditionally_inline =
     func.stub
@@ -88,18 +91,19 @@ let inline_non_recursive
     let r = R.map_benefit r (Inlining_cost.Benefit.(+) (R.benefit r_inlined)) in
     let body = Lift_code.lift_lets body in
     let env =
-      E.note_entering_closure env ~closure_id:fun_id
+      E.note_entering_closure env ~closure_id:closure_id_being_applied
         ~where:Inline_by_copying_function_body
     in
     let env = E.inlining_level_up env in
-    loop env r body
+    simplify env r body
   end else begin
     (* The function is not sufficiently good by itself, but may become if
        we allow inlining below *)
     let body, r_inlined =
-      inline_by_copying_function_body ~env
+      Inlining_transforms.inline_by_copying_function_body ~env
         ~r:(R.clear_benefit r)
-        ~clos ~lfunc:funct ~fun_id ~func ~args
+        ~function_decls ~lhs_of_application ~closure_id_being_applied
+        ~function_decl:func ~args ~simplify
     in
     let keep_inlined_version =
       let wsb =
@@ -131,28 +135,30 @@ let inline_non_recursive
     end
   end
 
-let inlining_decision_for_call_site ~env ~r
-      ~(clos : _ Flambda.function_declarations)
-      ~(funct : _ Flambda.t)
-      ~fun_id
-      ~(func : 'a Flambda.function_declaration)
-      ~(closure : Simple_value_approx.value_set_of_closures)
-      ~args_with_approxs ~dbg ~eid
-      ~inline_by_copying_function_body
-      ~inline_by_copying_function_declaration
-      ~loop =
+let for_call_site ~env ~r
+      ~(function_decls : Flambda.function_declarations)
+      ~(lhs_of_application : Variable.t)
+      ~closure_id_being_applied
+      ~(function_decl : Flambda.function_declaration)
+      ~(value_set_of_closures : Simple_value_approx.value_set_of_closures)
+      ~args ~args_approxs ~dbg ~simplify =
+  if List.length args <> List.length args_approxs then begin
+    Misc.fatal_error "Inlining_decision.for_call_site: inconsistent lengths \
+        of [args] and [args_approxs]"
+  end;
+  let args_with_approxs = args, args_approxs in
   let record_decision =
     let closure_stack =
       E.inlining_stats_closure_stack (E.note_entering_closure env
-          ~closure_id:fun_id ~where:Inlining_decision)
+          ~closure_id:closure_id_being_applied ~where:Inlining_decision)
     in
     Inlining_stats.record_decision ~closure_stack ~debuginfo:dbg
   in
   let args, approxs = args_with_approxs in
-  let no_transformation () : _ Flambda.t * R.t =
-    Fapply ({func = funct; args; kind = Direct fun_id;
-             dbg; return_arity = func.return_arity}, eid),
-    R.set_approx r A.value_unknown
+  let no_transformation () : Flambda.t * R.t =
+    Apply {func = lhs_of_application; args; kind = Direct closure_id_being_applied;
+           dbg; return_arity = function_decl.return_arity},
+      R.set_approx r A.value_unknown
   in
   let max_level = 3 in
   (* If [unconditionally_inline] is [true], then the function will always be
@@ -171,20 +177,21 @@ let inlining_decision_for_call_site ~env ~r
      correctly.
   *)
   (* CR mshinwell for mshinwell: finish the comment *)
-  let unconditionally_inline =
-    func.stub
-  in
-  let num_params = List.length func.params in
-  (* CR pchambart to pchambart: find a better name
+  let unconditionally_inline = function_decl.stub in
+  let num_params = List.length function_decl.params in
+  (* CR pchambart for pchambart: find a better name
      This is true if the function is directly an argument of the
-     apply construction. *)
-  let direct_apply = match funct with
-    | Fselect_closure ({ set_of_closures = Fset_of_closures _ }, _) -> true
-    | _ -> false in
+     apply construction.
+     mshinwell: disabled for now, check this elsewhere and set [stub].
+  *)
+  let direct_apply = false in
   let inlining_threshold = R.inlining_threshold r in
-  let fun_var = U.find_declaration_variable fun_id clos in
-  let recursive = Variable.Set.mem fun_var (U.recursive_functions clos) in
-  let probably_a_functor = is_probably_a_functor env clos approxs in
+  let fun_var = U.find_declaration_variable closure_id_being_applied function_decls in
+  let recursive =
+    Variable.Set.mem fun_var
+      (Find_recursive_functions.in_function_decls function_decls)
+  in
+  let probably_a_functor = is_probably_a_functor env function_decls approxs in
   let fun_cost =
     if unconditionally_inline || (direct_apply && not recursive)
        || probably_a_functor then
@@ -225,7 +232,7 @@ let inlining_decision_for_call_site ~env ~r
       *)
       inlining_threshold
     else
-      Inlining_cost.can_try_inlining func.body inlining_threshold
+      Inlining_cost.can_try_inlining function_decl.body inlining_threshold
         ~bonus:num_params
   in
   let expr, r =
@@ -244,7 +251,7 @@ let inlining_decision_for_call_site ~env ~r
          [inlining_threshold] is confusing.
          pchambart: is [remaining_inlining_threshold] better ? *)
       let r = R.set_inlining_threshold r remaining_inlining_threshold in
-      let unchanging_params = closure.unchanging_params in
+      let unchanging_params = value_set_of_closures.unchanging_params in
       (* Try inlining if the function is non-recursive and not too far above
          the threshold (or if the function is to be unconditionally
          inlined). *)
@@ -252,13 +259,13 @@ let inlining_decision_for_call_site ~env ~r
         || (not recursive && E.inlining_level env <= max_level)
       then
         inline_non_recursive
-          ~inline_by_copying_function_body
-          ~env ~r ~clos ~funct ~fun_id ~func
+          ~env ~r ~function_decls ~lhs_of_application
+          ~closure_id_being_applied ~func:function_decl
           ~record_decision
           ~direct_apply
           ~no_transformation
           ~probably_a_functor
-          ~args ~loop
+          ~args ~simplify
       else if E.inlining_level env > max_level then begin
         record_decision (Can_inline_but_tried_nothing (Level_exceeded true));
         no_transformation ()
@@ -267,14 +274,16 @@ let inlining_decision_for_call_site ~env ~r
         let tried_unrolling = ref false in
         let unrolling_result =
           if E.unrolling_allowed env && E.inlining_level env <= max_level then
-            if E.inside_set_of_closures_declaration clos.set_of_closures_id env then
+            if E.inside_set_of_closures_declaration function_decls.set_of_closures_id env then
               (* Self unrolling *)
               None
             else begin
               let env = E.inside_unrolled_function env in
               let body, r_inlined =
-                inline_by_copying_function_body ~env ~r:(R.clear_benefit r)
-                  ~clos ~lfunc:funct ~fun_id ~func ~args
+                Inlining_transforms.inline_by_copying_function_body ~env
+                  ~r:(R.clear_benefit r) ~function_decls
+                  ~lhs_of_application ~closure_id_being_applied ~function_decl
+                  ~args ~simplify
               in
               tried_unrolling := true;
               let wsb =
@@ -304,21 +313,15 @@ let inlining_decision_for_call_site ~env ~r
         match unrolling_result with
         | Some r -> r
         | None ->
-          if should_inline_function_known_to_be_recursive ~func ~clos ~env
-              ~closure ~approxs ~unchanging_params
+          if should_inline_function_known_to_be_recursive ~func:function_decl ~clos:function_decls ~env
+              ~value_set_of_closures ~approxs ~unchanging_params
           then
-(*
-            let () =
-              if Variable.Map.cardinal clos.funs > 1
-              then Format.printf "try inline multi rec %a@."
-                  Closure_id.print fun_id
-            in
-*)
             let copied_function_declaration =
-              inline_by_copying_function_declaration ~env
-                ~r:(R.clear_benefit r) ~funct ~clos ~fun_id ~func
-                ~args_with_approxs:(args, approxs) ~unchanging_params
-                ~specialised_args:closure.specialised_args ~dbg
+              Inlining_transforms.inline_by_copying_function_declaration ~env
+                ~r:(R.clear_benefit r) ~lhs_of_application
+                ~function_decls ~closure_id_being_applied ~function_decl
+                ~args ~args_approxs:approxs ~unchanging_params
+                ~specialised_args:value_set_of_closures.specialised_args ~dbg ~simplify
             in
             match copied_function_declaration with
             | Some (expr, r_inlined) ->
@@ -365,5 +368,5 @@ let inlining_decision_for_call_site ~env ~r
    Inlining inside the declaration of a stub could result in more code than
    expected being inlined. *)
 (* CR mshinwell for pchambart: maybe we need an example here *)
-let should_inline_inside_declaration (decl : _ Flambda.function_declaration) =
+let should_inline_inside_declaration (decl : Flambda.function_declaration) =
   not decl.stub

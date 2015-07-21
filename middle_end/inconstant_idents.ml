@@ -49,22 +49,19 @@
 
 module Int = Ext_types.Int
 
-type constant_result = {
-  not_constant_id : Variable.Set.t;
-  not_constant_closure : Set_of_closures_id.Set.t;
+type result = {
+  id : Variable.Set.t;
+  closure : Set_of_closures_id.Set.t;
 }
 
 module type Param = sig
-  type t
-  val expr : t Flambda.t
+  val expr : Flambda.t
   val for_clambda : bool
   val compilation_unit : Compilation_unit.t
   val toplevel : bool
 end
 
 module NotConstants(P:Param) = struct
-
-
   let for_clambda = P.for_clambda
   let compilation_unit = P.compilation_unit
 
@@ -124,54 +121,110 @@ module NotConstants(P:Param) = struct
      It can be empty when no constraint can be added like in the toplevel
      expression or in the body of a function.
   *)
-  let rec mark_loop ~toplevel (curr:dep list) (flam : _ Flambda.t) =
+  let rec mark_loop ~toplevel (curr : dep list) (flam : Flambda.t) =
     match flam with
-    | Flet(str, id, lam, body, _) ->
-      if str = Flambda.Mutable then mark_curr [Var id];
-      mark_loop ~toplevel [Var id] lam;
-      (* adds 'id in NC => curr in NC'
+    | Let(str, var, lam, body) ->
+      if str = Flambda.Mutable then mark_curr [Var var];
+      mark_named ~toplevel [Var var] lam;
+      (* adds 'var in NC => curr in NC'
          This is not really necessary, but compiling this correctly is
          trickier than eliminating that earlier. *)
-      register_implication ~in_nc:(Var id) ~implies_in_nc:curr;
+      mark_var var curr;
       mark_loop ~toplevel curr body
 
-    | Fletrec(defs, body, _) ->
-      List.iter (fun (id,def) ->
-          mark_loop ~toplevel [Var id] def;
-          (* adds 'id in NC => curr in NC' same remark as let case *)
-          register_implication ~in_nc:(Var id) ~implies_in_nc:curr) defs;
+    | Let_rec(defs, body) ->
+      List.iter (fun (var, def) ->
+          mark_named ~toplevel [Var var] def;
+          (* adds 'var in NC => curr in NC' same remark as let case *)
+          mark_var var curr)
+        defs;
       mark_loop ~toplevel curr body
 
-    | Fvar (id,_) ->
-      (* adds 'id in NC => curr in NC' *)
-      register_implication ~in_nc:(Var id) ~implies_in_nc:curr
+    | Var var -> mark_var var curr
 
-    | Fset_of_closures ({ function_decls = funcs ; free_vars = fv; specialised_args },_) ->
+    (* Not constant cases: we mark directly 'curr in NC' and mark
+       bound variables as in NC also *)
 
-      (* If a function in the closure is specialised, do not consider
-         it constant *)
-      Variable.Map.iter (fun _ id ->
-            register_implication
-              ~in_nc:(Var id)
-              ~implies_in_nc:[Closure funcs.set_of_closures_id]) specialised_args;
-      (* adds 'funcs in NC => curr in NC' *)
-      register_implication ~in_nc:(Closure funcs.set_of_closures_id) ~implies_in_nc:curr;
-      (* a closure is constant if its free variables are constants. *)
-      Variable.Map.iter (fun inner_id lam ->
-        mark_loop ~toplevel [Closure funcs.set_of_closures_id; Var inner_id] lam) fv;
-      Variable.Map.iter (fun fun_id (ffunc : _ Flambda.function_declaration) ->
-        (* for each function f in a closure c 'c in NC => f' *)
-        register_implication ~in_nc:(Closure funcs.set_of_closures_id) ~implies_in_nc:[Var fun_id];
-        (* function parameters are in NC *)
-        List.iter (fun id -> mark_curr [Var id]) ffunc.params;
-        mark_loop ~toplevel:false [] ffunc.body) funcs.funs
+    | Assign { being_assigned; new_value; } ->
+      (* CR mshinwell: not sure about this next comment.  Check this is
+         right *)
+      (* the assigned is also not constant *)
+      mark_curr [Var being_assigned];
+      mark_curr [Var new_value]
 
-    | Fconst _ -> ()
+    | Try_with (f1,id,f2) ->
+      mark_curr [Var id];
+      mark_curr curr;
+      mark_loop ~toplevel [] f1;
+      mark_loop ~toplevel [] f2
+
+    | Static_catch (_,ids,f1,f2) ->
+      List.iter (fun id -> mark_curr [Var id]) ids;
+      mark_curr curr;
+      mark_loop ~toplevel [] f1;
+      mark_loop ~toplevel [] f2
+      (* If recursive staticcatch is introduced: this becomes
+         ~toplevel:false *)
+
+    | For { bound_var; from_value; to_value; direction = _; body; } ->
+      mark_curr [Var bound_var];
+      mark_curr [Var from_value];
+      mark_curr [Var to_value];
+      mark_curr curr;
+      mark_loop ~toplevel:false [] body
+
+    | While (f1,body) ->
+      mark_curr curr;
+      mark_loop ~toplevel [] f1;
+      mark_loop ~toplevel:false [] body
+
+    | If_then_else (f1,f2,f3) ->
+      mark_curr curr;
+      mark_curr [Var f1];
+      mark_loop ~toplevel [] f2;
+      mark_loop ~toplevel [] f3
+
+    | Static_raise (_,l) ->
+      mark_curr curr;
+      List.iter (mark_loop ~toplevel []) l
+
+    | Apply ({func; args; _ }) ->
+      mark_curr [Var func];
+      mark_curr curr;
+      mark_vars args curr;
+
+    | Switch (arg,sw) ->
+      mark_curr curr;
+      mark_var arg curr;
+      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw.consts;
+      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw.blocks;
+      Misc.may (fun l -> mark_loop ~toplevel [] l) sw.failaction
+
+    | String_switch (arg,sw,def) ->
+      mark_curr curr;
+      mark_var arg curr;
+      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw;
+      Misc.may (fun l -> mark_loop ~toplevel [] l) def
+
+    | Send { kind = _; meth; obj; args; dbg = _; } ->
+      mark_var meth curr;
+      mark_var obj curr;
+      List.iter (fun arg -> mark_var arg curr) args
+
+    | Proved_unreachable ->
+      mark_curr curr
+
+  and mark_named ~toplevel curr (named : Flambda.named) =
+    match named with
+    | Set_of_closures (set_of_closures) ->
+      mark_loop_set_of_closures ~toplevel curr set_of_closures
+
+    | Const _ -> ()
 
     (* a symbol does not necessarilly points to a constant: toplevel
        modules are declared as symbols, but can constain not constant
        values *)
-    | Fsymbol(_sym,_) ->
+    | Symbol(_sym) ->
       (* for a later patch: *)
       (* if not (SymbolSet.mem sym *)
       (*           (Compilenv.approx_env ()).Flambdaexport.ex_constants) *)
@@ -185,7 +238,7 @@ module NotConstants(P:Param) = struct
       then mark_curr curr
 
     (* globals are symbols: handle like symbols *)
-    | Fprim(Lambda.Pgetglobal _id, [], _, _) ->
+    | Prim(Lambda.Pgetglobal _id, [], _) ->
       if not for_clambda
       then mark_curr curr
 
@@ -199,27 +252,29 @@ module NotConstants(P:Param) = struct
        when we are checking wether a variable can be statically allocated.
     *)
 
-    | Fprim(Lambda.Pmakeblock(_tag, Asttypes.Immutable), args, _dbg, _) ->
-      List.iter (mark_loop ~toplevel curr) args
+    | Prim(Lambda.Pmakeblock(_tag, Asttypes.Immutable), args, _dbg) ->
+      mark_vars args curr
 
 (*  (* If global mutables are allowed: *)
-    | Fprim(Lambda.Pmakeblock(_tag, Asttypes.Mutable), args, _dbg, _)
+    | Prim(Lambda.Pmakeblock(_tag, Asttypes.Mutable), args, _dbg, _)
       when for_clambda && toplevel ->
       List.iter (mark_loop ~toplevel curr) args
 *)
 
-    | Fselect_closure ({set_of_closures; closure_id; _}, _) ->
-      if Closure_id.in_compilation_unit compilation_unit closure_id
-      then mark_loop ~toplevel curr set_of_closures
-      else mark_curr curr
-
-    | Fvar_within_closure ({closure = f1; _},_)
-    | Fprim(Lambda.Pfield _, [f1], _, _) ->
-      if for_clambda
-      then mark_curr curr;
-      mark_loop ~toplevel curr f1
-
-    | Fprim(Lambda.Pgetglobalfield(id,i), [], _, _) ->
+    | Project_closure ({ set_of_closures; closure_id; }) ->
+      if Closure_id.in_compilation_unit compilation_unit closure_id then
+        mark_var set_of_closures curr
+      else
+        mark_curr curr
+    | Move_within_set_of_closures
+        ({ closure; start_from = _; move_to = _ }) ->
+      register_implication ~in_nc:(Var closure) ~implies_in_nc:curr
+    | Project_var ({ closure; closure_id = _; var = _ }) ->
+      register_implication ~in_nc:(Var closure) ~implies_in_nc:curr
+    | Prim(Lambda.Pfield _, [f1], _) ->
+      if for_clambda then mark_curr curr;
+      mark_var f1 curr
+    | Prim(Lambda.Pgetglobalfield(id,i), [], _) ->
       (* adds 'global i in NC => curr in NC' *)
       if for_clambda
       then mark_curr curr
@@ -238,88 +293,51 @@ module NotConstants(P:Param) = struct
       then register_implication ~in_nc:(Global i) ~implies_in_nc:curr
       else mark_curr curr
 
-    | Fprim(Lambda.Psetglobalfield (_,i), [f], _, _) ->
+    | Prim(Lambda.Psetglobalfield (_,i), [f], _) ->
       mark_curr curr;
       (* adds 'f in NC => global i in NC' *)
-      mark_loop ~toplevel [Global i] f
+      register_implication ~in_nc:(Var f) ~implies_in_nc:[Global i]
 
-    (* Not constant cases: we mark directly 'curr in NC' and mark
-       bound variables as in NC also *)
-
-    | Fassign (id, f1, _) ->
-      (* the assigned is also not constant *)
-      mark_curr [Var id];
+    | Prim (_, args, _) ->
       mark_curr curr;
-      mark_loop ~toplevel [] f1
+      mark_vars args curr
+    | Expr flam ->
+      mark_loop ~toplevel curr flam
 
-    | Ftrywith (f1,id,f2,_) ->
-      mark_curr [Var id];
-      mark_curr curr;
-      mark_loop ~toplevel [] f1;
-      mark_loop ~toplevel [] f2
+  and mark_var var curr =
+    (* adds 'id in NC => curr in NC' *)
+    register_implication ~in_nc:(Var var) ~implies_in_nc:curr
 
-    | Fstaticcatch (_,ids,f1,f2,_) ->
-      List.iter (fun id -> mark_curr [Var id]) ids;
-      mark_curr curr;
-      mark_loop ~toplevel [] f1;
-      mark_loop ~toplevel [] f2
-      (* If recursive staticcatch is introduced: this becomes
-         ~toplevel:false *)
+  and mark_vars vars curr =
+    (* adds 'id in NC => curr in NC' *)
+    List.iter (fun var -> mark_var var curr) vars
 
-    | Ffor (id,f1,f2,_,body,_) ->
-      mark_curr [Var id];
-      mark_curr curr;
-      mark_loop ~toplevel [] f1;
-      mark_loop ~toplevel [] f2;
-      mark_loop ~toplevel:false [] body
-
-    | Fsequence (f1,f2,_) ->
-      mark_curr curr;
-      mark_loop ~toplevel [] f1;
-      mark_loop ~toplevel [] f2
-
-    | Fwhile (f1,body,_) ->
-      mark_curr curr;
-      mark_loop ~toplevel [] f1;
-      mark_loop ~toplevel:false [] body
-
-    | Fifthenelse (f1,f2,f3,_) ->
-      mark_curr curr;
-      mark_loop ~toplevel [] f1;
-      mark_loop ~toplevel [] f2;
-      mark_loop ~toplevel [] f3
-
-    | Fstaticraise (_,l,_)
-    | Fprim (_,l,_,_) ->
-      mark_curr curr;
-      List.iter (mark_loop ~toplevel []) l
-
-    | Fapply ({func = f1; args = fl; _ },_) ->
-      mark_curr curr;
-      mark_loop ~toplevel [] f1;
-      List.iter (mark_loop ~toplevel []) fl
-
-    | Fswitch (arg,sw,_) ->
-      mark_curr curr;
-      mark_loop ~toplevel [] arg;
-      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw.consts;
-      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw.blocks;
-      Misc.may (fun l -> mark_loop ~toplevel [] l) sw.failaction
-
-    | Fstringswitch (arg,sw,def,_) ->
-      mark_curr curr;
-      mark_loop ~toplevel [] arg;
-      List.iter (fun (_,l) -> mark_loop ~toplevel [] l) sw;
-      Misc.may (fun l -> mark_loop ~toplevel [] l) def
-
-    | Fsend (_,f1,f2,fl,_,_) ->
-      mark_curr curr;
-      mark_loop ~toplevel [] f1;
-      mark_loop ~toplevel [] f2;
-      List.iter (mark_loop ~toplevel []) fl
-
-    | Funreachable _ ->
-      mark_curr curr
+  (* CR mshinwell: [toplevel] is now unused, is that correct? *)
+  and mark_loop_set_of_closures ~toplevel:_ curr
+        { Flambda. function_decls; free_vars; specialised_args } =
+    (* If a function in the set of closures is specialised, do not consider
+       it constant. *)
+    (* CR mshinwell for pchambart: This needs more explanation. *)
+    Variable.Map.iter (fun _ id ->
+          register_implication
+            ~in_nc:(Var id)
+            ~implies_in_nc:[Closure function_decls.set_of_closures_id])
+        specialised_args;
+    (* adds 'function_decls in NC => curr in NC' *)
+    register_implication ~in_nc:(Closure function_decls.set_of_closures_id)
+      ~implies_in_nc:curr;
+    (* a closure is constant if its free variables are constants. *)
+    Variable.Map.iter (fun inner_id var ->
+        register_implication ~in_nc:(Var var) ~implies_in_nc:[Var inner_id])
+      free_vars;
+    Variable.Map.iter (fun fun_id (ffunc : Flambda.function_declaration) ->
+        (* for each function f in a closure c 'c in NC => f' *)
+        register_implication ~in_nc:(Closure function_decls.set_of_closures_id)
+          ~implies_in_nc:[Var fun_id];
+        (* function parameters are in NC *)
+        List.iter (fun id -> mark_curr [Var id]) ffunc.params;
+        mark_loop ~toplevel:false [] ffunc.body)
+      function_decls.funs
 
   (* Second loop: propagates implications *)
   let propagate () =
@@ -352,15 +370,13 @@ module NotConstants(P:Param) = struct
   let res =
     mark_loop ~toplevel:P.toplevel [] P.expr;
     propagate ();
-    { not_constant_id = !variables;
-      not_constant_closure = !closures; }
+    { id = !variables;
+      closure = !closures; }
 
 end
 
-let not_constants (type a) ~for_clambda ~compilation_unit
-    (expr:a Flambda.t) =
+let inconstants ~for_clambda ~compilation_unit (expr : Flambda.t) =
   let module P = struct
-    type t = a
     let expr = expr
     let for_clambda = for_clambda
     let compilation_unit = compilation_unit

@@ -13,18 +13,18 @@
 
 let used_globals id tree =
   let used = ref Ext_types.Int.Set.empty in
-  Flambdaiter.iter (function
-      | Fprim(Pgetglobalfield(modul, pos), _, _, _) when Ident.same id modul ->
-          used := Ext_types.Int.Set.add pos !used
-      | _ -> ()) tree;
+  Flambda_iterators.iter_named (function
+      | Prim (Pgetglobalfield (modul, pos), _, _) when Ident.same id modul ->
+        used := Ext_types.Int.Set.add pos !used
+      | _ -> ())
+    tree;
   !used
 
 let remove_unused_globals tree =
   let id = Compilation_unit.get_current_id_exn () in
   let used = used_globals id tree in
-  Flambdaiter.map (function
-      | Fprim(Psetglobalfield(Not_exported, pos), arg, dbg, attr)
-        when not (Ext_types.Int.Set.mem pos used) ->
-          Fprim(Pignore, arg, dbg, attr)
+  Flambda_iterators.map_named (function
+      | Prim (Psetglobalfield(Not_exported, pos), arg, dbg)
+        when not (Ext_types.Int.Set.mem pos used) -> Prim (Pignore, arg, dbg)
       | e -> e)
     tree

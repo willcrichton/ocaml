@@ -73,6 +73,7 @@
 
 *)
 
+(*
 module Pair_var_var =
   Ext_types.Identifiable.Make(Ext_types.Pair(Variable.M)(Variable.M))
 
@@ -122,11 +123,11 @@ let transitive_closure state =
   in
   fp state
 
-let unchanging_params_in_recursion (decls : _ Flambda.function_declarations) =
+let unchanging_params_in_recursion (decls : Flambda.function_declarations) =
   let escaping_functions = ref Variable.Set.empty in
   let relation = ref Pair_var_var.Map.empty in
   let variables_at_position =
-    Variable.Map.map (fun (decl : _ Flambda.function_declaration) ->
+    Variable.Map.map (fun (decl : Flambda.function_declaration) ->
         Array.of_list decl.params)
       decls.funs
   in
@@ -157,23 +158,18 @@ let unchanging_params_in_recursion (decls : _ Flambda.function_declarations) =
   in
   (* If the called closure is in the current set of closures, record the
      relation (callee, callee_arg) <- (caller, caller_arg) *)
-  let check_argument ~caller ~callee ~callee_pos arg =
+  let check_argument ~caller ~callee ~callee_pos caller_arg =
     match find_callee_arg ~callee ~callee_pos with
     | None -> () (* not a recursive call *)
     | Some callee_arg ->
-        match (arg : _ Flambda.t) with
-        | Fvar(caller_arg,_) ->
-            begin
-              match Variable.Map.find caller decls.funs with
-              | exception Not_found ->
-                  assert false
-              | { params } ->
-                  if List.mem caller_arg params then
-                    link ~caller ~caller_arg ~callee ~callee_arg
-                  else
-                    mark ~callee ~callee_arg
-            end
-        | _ -> mark ~callee ~callee_arg
+      match Variable.Map.find caller decls.funs with
+      | exception Not_found ->
+        assert false
+      | { params } ->
+        if List.mem caller_arg params then
+          link ~caller ~caller_arg ~callee ~callee_arg
+        else
+          mark ~callee ~callee_arg
   in
   let test_escape var =
     if Variable.Map.mem var decls.funs
@@ -182,33 +178,33 @@ let unchanging_params_in_recursion (decls : _ Flambda.function_declarations) =
   let arity ~callee =
     match Variable.Map.find callee decls.funs with
     | exception Not_found -> 0
-    | func -> Flambdautils.function_arity func
+    | func -> Flambda_utils.function_arity func
   in
-  let rec loop ~caller (expr : _ Flambda.t) =
+  let rec loop ~caller (expr : Flambda.t) =
     match expr with
-    | Fvar (var,_) -> test_escape var
-    | Fapply ({ func = Fvar(callee,_); args }, _) ->
-        let num_args = List.length args in
-        for callee_pos = num_args to (arity ~callee) - 1 do
-          match find_callee_arg ~callee ~callee_pos with
-          | None -> ()
-          | Some callee_arg -> mark ~callee ~callee_arg
-          (* if a function is partially aplied, consider all missing
-             arguments as not kept*)
-        done;
-        List.iteri (fun callee_pos arg ->
-            check_argument ~caller ~callee ~callee_pos arg)
-          args;
-        List.iter (loop ~caller) args
+    | Var var -> test_escape var
+    | Apply { func = callee; args } ->
+      let num_args = List.length args in
+      for callee_pos = num_args to (arity ~callee) - 1 do
+        match find_callee_arg ~callee ~callee_pos with
+        | None -> ()
+        | Some callee_arg -> mark ~callee ~callee_arg
+        (* if a function is partially aplied, consider all missing
+           arguments as not kept*)
+      done;
+      List.iteri (fun callee_pos arg ->
+          check_argument ~caller ~callee ~callee_pos arg)
+        args
     | e ->
-        Flambdaiter.apply_on_subexpressions (loop ~caller) e
+      Flambda_iterators.apply_on_subexpressions (loop ~caller)
+        (fun (_ : Flambda.named) -> ()) e
   in
-  Variable.Map.iter (fun caller (decl : _ Flambda.function_declaration) ->
+  Variable.Map.iter (fun caller (decl : Flambda.function_declaration) ->
       loop ~caller decl.body)
     decls.funs;
   let relation =
     Variable.Map.fold (fun func_var
-          ({ params } : _ Flambda.function_declaration) relation ->
+          ({ params } : Flambda.function_declaration) relation ->
         if Variable.Set.mem func_var !escaping_functions
         then
           List.fold_left (fun relation param ->
@@ -231,7 +227,7 @@ let unchanging_params_in_recursion (decls : _ Flambda.function_declarations) =
       result Variable.Set.empty
   in
   let variables = Variable.Map.fold (fun _
-        ({ params } : _ Flambda.function_declaration) set ->
+        ({ params } : Flambda.function_declaration) set ->
       Variable.Set.union (Variable.Set.of_list params) set)
     decls.funs Variable.Set.empty
   in
@@ -241,13 +237,13 @@ type argument =
   | Used
   | Argument of Variable.t
 
-let unused_arguments (decls : _ Flambda.function_declarations) : Variable.Set.t =
+let unused_arguments (decls : Flambda.function_declarations) : Variable.Set.t =
   let used_variables = ref Variable.Set.empty in
   let used_variable var =
     used_variables := Variable.Set.add var !used_variables
   in
   let variables_at_position =
-    Variable.Map.fold (fun var (decl : _ Flambda.function_declaration) map ->
+    Variable.Map.fold (fun var (decl : Flambda.function_declaration) map ->
         let cid = Closure_id.wrap var in
         Closure_id.Map.add cid (Array.of_list decl.params) map)
       decls.funs Closure_id.Map.empty
@@ -260,26 +256,21 @@ let unused_arguments (decls : _ Flambda.function_declarations) : Variable.Set.t 
         (* Direct calls don't have overapplication *)
         Argument arr.(callee_pos)
   in
-  let rec loop (expr : _ Flambda.t) =
+  let rec loop (expr : Flambda.t) =
     match expr with
-    | Fvar (var,_) -> used_variable var
-    | Fapply ({ func; args; kind = Direct callee }, _) ->
-        List.iteri (fun callee_pos arg ->
-            match arg with
-            | Flambda.Fvar (var, _) -> begin
-                match find_callee_arg ~callee ~callee_pos with
-                | Used -> used_variable var
-                | Argument param ->
-                    if not (Variable.equal var param) then
-                      used_variable var
-              end
-            | _ -> loop arg)
-          args;
-        loop func
+    | Var var -> used_variable var
+    | Apply { func = _; args; kind = Direct callee } ->
+      List.iteri (fun callee_pos arg ->
+          match find_callee_arg ~callee ~callee_pos with
+          | Used -> used_variable arg
+          | Argument param ->
+            if not (Variable.equal arg param) then used_variable arg)
+        args
     | e ->
-        Flambdaiter.apply_on_subexpressions loop e
+      Flambda_iterators.apply_on_subexpressions loop
+        (fun (_ : Flambda.named) -> ()) e
   in
-  Variable.Map.iter (fun _caller (decl : _ Flambda.function_declaration) ->
+  Variable.Map.iter (fun _caller (decl : Flambda.function_declaration) ->
       loop decl.body)
     decls.funs;
   let arguments = Variable.Map.fold (fun _ decl acc ->
@@ -287,3 +278,8 @@ let unused_arguments (decls : _ Flambda.function_declarations) : Variable.Set.t 
       decls.funs Variable.Set.empty
   in
   Variable.Set.diff arguments !used_variables
+*)
+
+(* CR mshinwell: re-enable this once everything else is working *)
+let unchanging_params_in_recursion _ = Variable.Set.empty
+let unused_arguments _ = Variable.Set.empty

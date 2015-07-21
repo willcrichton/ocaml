@@ -16,9 +16,9 @@
 
    Function declarations (which may bind one or more variables identifying
    functions, possibly with mutual recursion) are transformed to
-   [Fset_of_closures] expressions.  [Fselect_closure] expressions are then
-   used to select a closure for a particular function from a [Fset_of_closures]
-   expression.  The [Fset_of_closures] expressions say nothing about the
+   [Set_of_closures] expressions.  [Project_closure] expressions are then
+   used to select a closure for a particular function from a [Set_of_closures]
+   expression.  The [Set_of_closures] expressions say nothing about the
    actual runtime layout of the closures; this is handled when [Flambda] code
    is translated to [Clambda] code.
 
@@ -45,4 +45,4 @@ val lambda_to_flambda
    : backend:(module Backend_intf.S)
   -> exported_fields:int
   -> Lambda.lambda
-  -> Expr_id.t Flambda.t
+  -> Flambda.t

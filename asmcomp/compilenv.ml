@@ -34,7 +34,7 @@ let export_infos_table =
 
 let imported_closure_table =
   (Set_of_closures_id.Tbl.create 10
-   : Expr_id.t Flambda.function_declarations Set_of_closures_id.Tbl.t)
+   : Flambda.function_declarations Set_of_closures_id.Tbl.t)
 
 module CstMap =
   Map.Make(struct
@@ -465,19 +465,21 @@ let imported_closure =
 
     let sym_map = orig_var_map clos in
 
-    let f = function
-      | Fsymbol (sym, ()) as e ->
-          (try Fvar(Symbol.Map.find sym sym_map,()) with
-           | Not_found -> e)
-      | e -> e in
+    let f expr = expr in
+    let f_named (named : Flambda.named) =
+      match named with
+      | Symbol sym ->
+          (try Expr(Var(Symbol.Map.find sym sym_map)) with
+           | Not_found -> named)
+      | named -> named
+    in
 
     { clos with
       funs =
         Variable.Map.map
-          (fun ff ->
-             let body = Flambdaiter.map_toplevel f ff.body in
-             let body = Flambdaiter.map_data(fun () -> Expr_id.create ()) body in
-             let free_variables = Flambdaiter.free_variables body in
+          (fun (ff : Flambda.function_declaration) ->
+             let body = Flambda_iterators.map_toplevel f f_named ff.body in
+             let free_variables = Free_variables.calculate body in
              { ff with body; free_variables })
           clos.funs } in
   let aux fun_id =
