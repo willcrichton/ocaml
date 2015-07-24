@@ -1,9 +1,13 @@
 open Flambda
+open Ext_types
 
-(* let plam flam =
- *   if !Clflags.dump_flambda then Printflambda.flambda Format.std_formatter flam else () *)
+let plam flam =
+  if !Clflags.dump_flambda (* && false *) then begin
+    Flambda_printers.named Format.std_formatter flam;
+    Format.printf "\n"
+  end
 
-(* let check_can_unbox ({body; return_arity} : 'a function_declaration) =
+(*  let check_can_unbox ({body; return_arity} : 'a function_declaration) =
  *   let fail_return = (false, 0, Int.Map.empty) in
  *   if return_arity <> 1 then fail_return else
  *   let unbox_return (can_unbox, num_returns, map) flam = match flam with
@@ -114,51 +118,256 @@ open Flambda
  *     | Fstaticraise _ as e -> ((), e)
  *     | _ -> Misc.fatal_error "Unboxed invalid return site" in
  *   let (_, body) = Flambdaiter.fold_return_sites unbox_return () body in
- *   body *)
+ *   body  *)
+
+let no_arg_variant = 10 (* CR wcrichton: appropriate value for this? *)
+(* let dummy_value = 1337 *)
+
+let check_can_unbox {body; return_arity} =
+  if return_arity <> 1 then None
+  else begin
+    let returned_vars = ref Variable.Set.empty in
+    ignore (Flambda_iterators.map_return_vars (fun v ->
+      returned_vars := Variable.Set.add v !returned_vars; v)
+      body);
+    let can_unbox = ref `No_blocks_found in
+    ignore (Flambda_iterators.iter (fun t -> match t with
+      | Let (Immutable, var, binding, _) ->
+        if not (Variable.Set.mem var !returned_vars) then ()
+        else begin
+           match binding with
+            | Prim (Pmakeblock (_, Immutable), _, _) ->
+              begin match !can_unbox with
+              | `Bad_return -> ()
+              | _ -> can_unbox := `Ok_return
+              end
+            | Const (Const_pointer _) -> ()
+            | _ -> can_unbox := `Bad_return
+        end
+      | Let (Mutable, var, _, _) ->
+        if Variable.Set.mem var !returned_vars then
+          can_unbox := `Bad_return
+      | _ -> ())
+      (fun _ -> ())
+      body);
+    match !can_unbox with
+    | `Ok_return -> Some returned_vars
+    | _ -> None
+  end
+
 
 let unbox_returns tree =
-  Format.printf "LOLHI";
   Flambda_iterators.map (fun x -> x) (function
-    | Set_of_closures ({function_decls; (*free_vars; specialised_args*)} as closure_set)
+    | Set_of_closures ({function_decls; free_vars; (*specialised_args*)} as closure_set)
       as original_tree ->
       if not (!Clflags.dump_flambda) ||
         Variable.Map.cardinal function_decls.funs <> 1
-      then original_tree else
-
-      let mkvar = Variable.create
-                    ~current_compilation_unit:function_decls.compilation_unit in
+      then original_tree else begin
+      let mkvar =
+        Variable.create ~current_compilation_unit:function_decls.compilation_unit in
       let mkvar_suffix v s = mkvar ((Variable.unique_name v) ^ s) in
-
       let (fn_id, fn) = Variable.Map.choose function_decls.funs in
-      let returned_vars = ref Variable.Set.empty in
-      ignore (Flambda_iterators.map_return_vars (fun v ->
-        returned_vars := Variable.Set.add v !returned_vars; v)
-        fn.body);
-
-      let updated_vars = ref Variable.Map.empty in
-      let body = Flambda_iterators.map (function
-        | Let (Immutable, var, Prim (Pmakeblock (_, Immutable), args, _), _) as binding ->
-          let new_var = mkvar_suffix var "_unboxed" in
-          updated_vars := Variable.Map.add var new_var !updated_vars;
-          Let (Immutable, new_var, Prim (Pmakeblock_noheap, args, Debuginfo.none),
-               binding)
-        | t -> t)
-        (fun x -> x)
-        fn.body
-      in
-
-      let body = Flambda_iterators.map_return_vars (fun v ->
-        try Variable.Map.find v !updated_vars with Not_found -> v)
-        body
-      in
-
-      let fn = {fn with body; stub = true} in
-
-      Set_of_closures
-        {closure_set with
-         function_decls =
-           {function_decls with
-            funs = Variable.Map.singleton fn_id fn}}
+      begin match check_can_unbox fn with
+      | None -> original_tree
+      | Some returned_vars ->
+        plam original_tree;
+        let updated_vars = ref Variable.Map.empty in
+        let tag_arities = ref Int.Map.empty in
+        let body = Flambda_iterators.map (fun t -> match t with
+          | Let (Immutable, var, binding, body) ->
+            if not (Variable.Set.mem var !returned_vars) then t
+            else begin
+              let new_var = mkvar_suffix var "_unboxed" in
+              let tag_var = mkvar_suffix var "_tag" in
+              let (args, tag) = begin match binding with
+                | Prim (Pmakeblock (tag, Immutable), args, _) -> (args, tag)
+                | Const (Const_pointer _) -> ([var], no_arg_variant)
+                | _ -> Misc.fatal_error "Returned variable must be block or ptr"
+              end in
+              updated_vars := Variable.Map.add var (new_var, List.length args) !updated_vars;
+              tag_arities := Int.Map.add tag (List.length args) !tag_arities;
+              Let (Immutable, var, binding,
+                   Let (Immutable, tag_var, Const (Const_base (Const_int tag)),
+                        Let (Immutable, new_var,
+                             Prim (Pmakeblock_noheap, tag_var :: args, Debuginfo.none),
+                             body)))
+            end
+          | _ -> t)
+          (fun x -> x)
+          fn.body
+        in
+        let body = Flambda_iterators.map_return_vars (fun v ->
+          try fst (Variable.Map.find v !updated_vars) with Not_found -> v)
+          body
+        in
+        let max_return_arity = Variable.Map.fold (fun _ (_, arity) acc ->
+          max arity acc)
+          !updated_vars
+          0
+        in
+        let result_vars =
+          let rec builder = function
+            | 0 -> []
+            | n -> ("_result" ^ (string_of_int (n - 1))) :: (builder (n - 1))
+          in
+          List.map (mkvar_suffix fn_id) (List.rev (builder max_return_arity))
+        in
+        let gen name binding =
+          let var = mkvar name in
+          (var, Let (Immutable, var, binding, Var var))
+        in
+        let rebind let_ body = match let_ with
+          | Let (Immutable, var, binding, _) -> Let (Immutable, var, binding, body)
+          | _ -> assert false
+        in
+        let unboxed_return_id = mkvar_suffix fn_id "_unboxed_return" in
+        let tag_var = mkvar_suffix fn_id "_tag" in
+        let switch =
+          let tags = List.map fst (Int.Map.bindings !tag_arities) in
+          let mkblock tag =
+            let return_arity = Int.Map.find tag !tag_arities in
+            let (_, let_) =
+              gen "switch_branch" (Prim (
+                Pmakeblock (tag, Immutable),
+                (result_vars
+                 |> List.mapi (fun i x -> (i, x))
+                 |> List.filter (fun (i, _) -> i < return_arity)
+                 |> List.map snd),
+                Debuginfo.none))
+            in
+            (tag, let_)
+          in
+          Switch (
+            tag_var,
+            {
+              numconsts = Int.Set.of_list tags;
+              consts = List.map mkblock tags;
+              numblocks = Int.Set.empty;
+              blocks = [];
+              failaction = None;
+            })
+        in
+        let (special_const_var, special_const_body) =
+          gen "special_const" (Const (Const_base (Const_int no_arg_variant)))
+        in
+        let (cmp_var, cmp_body) =
+          gen "cmp" (Prim (Pintcomp Cneq, [tag_var; special_const_var], Debuginfo.none))
+        in
+        let (switch_var, switch_body) = gen "switch" (Expr switch) in
+        (* let (_, if_then_let) =
+         *   gen "if_then" (Prim (Pisblock, [cmp_var; switch_var; List.nth result_vars 0],
+         *                        Debuginfo.none))
+         * in *)
+        let if_then_let =
+          List.fold_right rebind [special_const_body; cmp_body; switch_body] (Prim (Pisblock, [cmp_var; switch_var; List.nth result_vars 0],
+                               Debuginfo.none))(* if_then_let *)
+        in
+        let field_bindings =
+          List.fold_left
+            (fun acc (index, result_var) ->
+               Let (Immutable,
+                    result_var,
+                    Prim (Pgetblock_noheap index, [unboxed_return_id], Debuginfo.none),
+                    acc))
+            if_then_let
+            (List.mapi (fun i x -> (i, x)) (tag_var :: result_vars))
+        in
+        let wrapper_params = List.map (fun id -> mkvar_suffix id "_wrapper") fn.params in
+        let inner_closure_id = mkvar_suffix fn_id "_multireturn" in
+        let inner_fn_id = mkvar_suffix fn_id "_unboxed" in
+        let apply_inner =
+          Let (
+            Immutable,
+            unboxed_return_id,
+            Expr (Apply ({
+              func = inner_closure_id;
+              args = wrapper_params;
+              kind = Direct (Closure_id.wrap inner_fn_id);
+              dbg = Debuginfo.none;
+              return_arity = max_return_arity + 1;
+            })),
+            field_bindings)
+        in
+        let new_free_closure_var =
+          List.map
+            (fun (key, value) -> (key, value, mkvar "new_free_var"))
+            (Variable.Map.bindings free_vars)
+        in
+        let inner_free_closure_var =
+          List.fold_left
+            (fun map (value, _, key) ->
+               Variable.Map.add key value map)
+            Variable.Map.empty
+            new_free_closure_var
+        in
+        let inner_free_fn_var =
+          fn.free_variables
+          |> List.fold_right
+               Variable.Set.remove
+               (List.map (fun (k, _, _) -> k) new_free_closure_var)
+          |> List.fold_right
+               Variable.Set.add
+               (List.map (fun (_ ,_, v) -> v) new_free_closure_var)
+        in
+        let final_fn =
+          let reverse_map =
+            List.fold_left
+              (fun map (key, _, value) -> Variable.Map.add key value map)
+              Variable.Map.empty
+              new_free_closure_var in
+          let body = Flambda_iterators.map (function
+            | Var var ->
+              (try Var (Variable.Map.find var reverse_map) with Not_found -> Var var)
+            | e -> e)
+            (fun x -> x)
+            body
+          in
+          {fn with
+           body;
+           free_variables = inner_free_fn_var;
+           return_arity = max_return_arity + 1}
+        in
+        let (inner_closure_set_var, inner_closure_set_body) =
+          gen "set_of_closures" (Set_of_closures ({
+            function_decls =
+              {function_decls with funs = Variable.Map.singleton inner_fn_id final_fn};
+            free_vars = inner_free_closure_var;
+            specialised_args = Variable.Map.empty;
+          }))
+        in
+        let fn_binding =
+          rebind inner_closure_set_body (Let (
+            Immutable,
+            inner_closure_id,
+            Project_closure ({
+              set_of_closures = inner_closure_set_var;
+              closure_id = Closure_id.wrap inner_fn_id;
+            }),
+            apply_inner))
+        in
+        let outer_free_fn_variables =
+          fn.free_variables
+          |> List.fold_right Variable.Set.remove fn.params
+          |> List.fold_right Variable.Set.add wrapper_params
+        in
+        let new_fn = {
+          fn with
+          body = fn_binding;
+          params = wrapper_params;
+          free_variables = outer_free_fn_variables;
+          stub = true}
+        in
+        let result =
+          Set_of_closures
+            {closure_set with
+             function_decls =
+               {function_decls with
+                funs = Variable.Map.singleton fn_id new_fn}};
+        in
+        plam result;
+        result
+      end
+      end
 
       (* (\* Update return sites in the closure if eligible *\)
        * let (fn_id, fn) = Variable.Map.choose function_decls.funs in
@@ -395,10 +604,12 @@ let duplicate tree =
 let lift_ifs tree =
   Flambda_iterators.map (function
     | Let (Immutable, var, Prim(Pisblock, [cond; thn; els], _), body) ->
-      If_then_else(
+      let qq = If_then_else(
         cond,
         Let (Immutable, var, Expr (Var thn), body),
         duplicate (Let (Immutable, var, Expr (Var els), body)))
+      in Flambda_printers.flambda Format.std_formatter body; qq
+
     | e -> e)
     (fun x -> x)
     tree

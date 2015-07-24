@@ -11,6 +11,10 @@
 (*                                                                        *)
 (**************************************************************************)
 
+type flambda_kind =
+  | Normal
+  | Lifted
+
 (* Explicit "ignore" functions.  We name every pattern variable, avoiding
    underscores, to try to avoid accidentally failing to handle (for example)
    a particular variable.
@@ -276,9 +280,10 @@ let primitive_invariants flam ~no_access_to_global_module_identifiers =
         | Psequand | Psequor ->
           raise (Sequential_logical_operator_primitives_must_be_expanded prim)
         | Pgetglobalfield _ | Psetglobalfield _ | Psetglobal _ ->
-          if no_access_to_global_module_identifiers then begin
-            raise (Access_to_global_module_identifier prim)
-          end
+          (* if no_access_to_global_module_identifiers then begin *)
+          (*   raise (Access_to_global_module_identifier prim) *)
+          (* end *)
+          ()
         | Pgetglobal id ->
           if no_access_to_global_module_identifiers
             && not (Ident.is_predef_exn id) then
@@ -435,7 +440,7 @@ let every_static_exception_is_caught_at_a_single_position flam =
   in
   Flambda_iterators.iter f (fun (_ : Flambda.named) -> ()) flam
 
-let check_exn ?(flambdasym=false) ?(cmxfile=false) flam =
+let check_exn ?(kind=Normal) ?(cmxfile=false) flam =
   try
     variable_invariants flam;
     primitive_invariants flam ~no_access_to_global_module_identifiers:cmxfile;
@@ -444,7 +449,7 @@ let check_exn ?(flambdasym=false) ?(cmxfile=false) flam =
     no_var_within_closure_is_bound_multiple_times flam;
     every_declared_closure_is_from_current_compilation_unit flam;
     no_closure_id_is_bound_multiple_times flam;
-    if not flambdasym then begin
+    if kind = Normal then begin
       every_used_function_from_current_compilation_unit_is_declared flam;
       every_used_var_within_closure_from_current_compilation_unit_is_declared
         flam;

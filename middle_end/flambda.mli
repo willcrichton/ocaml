@@ -93,6 +93,7 @@ type const =
   | Const_float of float
 
 type apply = {
+  (* CR mshinwell: rename func -> callee, and lhs_of_application -> callee *)
   func : Variable.t;
   args : Variable.t list;
   kind : call_kind;
@@ -247,6 +248,8 @@ and function_declaration = {
       return values to allow indirect calls to functions with a special calling
       convention.  For instance indirect calls to tuplified functions must go
       through a stub.  Stubs will be unconditionally inlined. *)
+  (* CR mshinwell for pchambart: Why don't we call this
+     [unconditionally_inline]? *)
   stub : bool;
   dbg : Debuginfo.t;
 }

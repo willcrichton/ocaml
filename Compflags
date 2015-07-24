@@ -22,10 +22,15 @@ case $1 in
     ;;
 
     asmcomp/clambdagen.* \
+  | asmcomp/closure_offsets.* \
   | asmcomp/flambdaexport.* \
   | asmcomp/flambdaexport_types.* \
   | asmcomp/flambdasym.* \
+  | asmcomp/lift_constants.* \
+  | asmcomp/lifted_flambda_utils.* \
   | asmcomp/import_approx.* \
+  | asmcomp/build_export_info.* \
+  | asmcomp/un_anf.* \
   | middle_end/* \
   | middle_end/base_types/*)
     # Strict compilation options for Flambda passes.

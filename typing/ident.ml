@@ -241,7 +241,9 @@ module T = struct
   let output = output
   let print = print
   let hash = hash
-  let equal = equal
+  let equal = same
 end
 
+let original_equal = equal
 include Ext_types.Identifiable.Make (T)
+let equal = original_equal

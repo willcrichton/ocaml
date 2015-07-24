@@ -276,22 +276,11 @@ module NotConstants(P:Param) = struct
       mark_var f1 curr
     | Prim(Lambda.Pgetglobalfield(id,i), [], _) ->
       (* adds 'global i in NC => curr in NC' *)
-      if for_clambda
-      then mark_curr curr
-      else
-        (* This is correct only if there is a rebind phase after !
-           Clambdagen cannot handle this *)
-        (* if some inlining produced some unreachable code like
-           {[let a = 0 in
-             if a
-             then a.(0)
-             else ... ]}
-           then a.(0) cannot be compiled. There must be a specialisation
-           phase after that eliminating the then branch and a dead code
-           elimination eliminating potential reference to a.(0) *)
       if Ident.same id (Compilation_unit.get_persistent_ident compilation_unit)
-      then register_implication ~in_nc:(Global i) ~implies_in_nc:curr
-      else mark_curr curr
+      then
+        register_implication ~in_nc:(Global i) ~implies_in_nc:curr
+      else
+        mark_curr curr
 
     | Prim(Lambda.Psetglobalfield (_,i), [f], _) ->
       mark_curr curr;
@@ -312,7 +301,10 @@ module NotConstants(P:Param) = struct
     (* adds 'id in NC => curr in NC' *)
     List.iter (fun var -> mark_var var curr) vars
 
-  (* CR mshinwell: [toplevel] is now unused, is that correct? *)
+  (* CR mshinwell: [toplevel] is now unused, is that correct?
+     CRX pchambart: [toplevel] is intended for allowing allocations of
+        mutable block statically. This is not yet activated because of
+        missing parts in the gc currently. *)
   and mark_loop_set_of_closures ~toplevel:_ curr
         { Flambda. function_decls; free_vars; specialised_args } =
     (* If a function in the set of closures is specialised, do not consider
@@ -328,7 +320,8 @@ module NotConstants(P:Param) = struct
       ~implies_in_nc:curr;
     (* a closure is constant if its free variables are constants. *)
     Variable.Map.iter (fun inner_id var ->
-        register_implication ~in_nc:(Var var) ~implies_in_nc:[Var inner_id])
+        register_implication ~in_nc:(Var var)
+          ~implies_in_nc:[Var inner_id; Closure function_decls.set_of_closures_id])
       free_vars;
     Variable.Map.iter (fun fun_id (ffunc : Flambda.function_declaration) ->
         (* for each function f in a closure c 'c in NC => f' *)

@@ -106,7 +106,13 @@ ASMCOMP=\
   asmcomp/flambdaexport_types.cmo \
   asmcomp/flambdaexport.cmo \
   asmcomp/compilenv.cmo \
+  asmcomp/lift_constants.cmo \
+  asmcomp/lifted_flambda_utils.cmo \
+  asmcomp/build_export_info.cmo \
+  asmcomp/closure_offsets.cmo \
+  asmcomp/clambdagen.cmo \
   asmcomp/import_approx.cmo \
+  asmcomp/un_anf.cmo \
   asmcomp/strmatch.cmo asmcomp/cmmgen.cmo \
   asmcomp/printmach.cmo asmcomp/selectgen.cmo asmcomp/selection.cmo \
   asmcomp/comballoc.cmo \
@@ -149,6 +155,7 @@ MIDDLE_END=\
   middle_end/find_recursive_functions.cmo \
   middle_end/invariant_params.cmo \
   middle_end/inconstant_idents.cmo \
+  middle_end/alias_analysis.cmo \
   middle_end/simplify_common.cmo \
   middle_end/eliminate_const_block.cmo \
   middle_end/remove_unused_arguments.cmo \

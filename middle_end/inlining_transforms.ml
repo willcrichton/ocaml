@@ -67,6 +67,10 @@ let copy_of_function's_body_with_freshened_params
   let body = Flambda_utils.toplevel_substitution subst function_decl.body in
   freshened_params, body
 
+(* CR mshinwell: Add a note somewhere to explain why "bound by the closure"
+   does not include the function identifiers for other functions in the same
+   set of closures. *)
+
 (** Inline a function by copying its body into a context where it becomes
     closed.  That is to say, we bind the free variables of the body
     (= "variables bound by the closure"), and any function identifiers
@@ -83,7 +87,7 @@ let inline_by_copying_function_body ~env ~r ~function_decls ~lhs_of_application
     let args = List.map (fun arg -> Flambda.Expr (Var arg)) args in
     Flambda_utils.bind ~body ~bindings:(List.combine freshened_params args)
   in
-  (* Add bindings for variables bound by the closure. *)
+  (* Add bindings for the variables bound by the closure. *)
   let bindings_for_vars_bound_by_closure_and_params_to_args =
     fold_over_projections_of_vars_bound_by_closure ~closure_id_being_applied
       ~lhs_of_application ~function_decls ~init:bindings_for_params_to_args
